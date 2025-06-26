@@ -1,0 +1,26 @@
+FROM golang:1.23.10 as builder
+
+WORKDIR /usr/src/app
+COPY . .
+
+# Install dependencies
+RUN go mod download
+
+# Build the worker binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/worker bootstrap/worker/main.go
+
+# Production stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy the binary from builder stage
+COPY --from=builder /usr/src/app/bin/worker .
+
+# Expose worker port (if needed for health checks)
+EXPOSE 8081
+
+# Run the worker
+CMD ["./worker"] 

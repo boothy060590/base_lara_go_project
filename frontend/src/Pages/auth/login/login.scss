@@ -1,0 +1,21 @@
+@use '@/assets/scss/card.scss';
+@use '@/assets/scss/form.scss';
+
+label {
+  display: block;
+  margin-top: 0.625rem;
+}
+
+.profile-img-card {
+  width: 6rem;
+  height: 6rem;
+  margin: 0 auto 0.625rem;
+  display: block;
+  -moz-border-radius: 50%;
+  -webkit-border-radius: 50%;
+  border-radius: 50%;
+}
+
+.error-feedback {
+  color: red;
+}

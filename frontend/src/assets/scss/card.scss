@@ -1,0 +1,34 @@
+// Shared card and card-container styles
+.card-container.card {
+  max-width: 21.875rem !important;
+  padding: 2.5rem 2.5rem;
+}
+
+.card {
+  background-color: #f7f7f7;
+  padding: 1.25rem 1.5625rem 1.875rem;
+  margin: 0 auto 1.5625rem;
+  margin-top: 3.125rem;
+  border-radius: 1rem;
+  -moz-border-radius: 1rem;
+  -webkit-border-radius: 1rem;
+  -moz-box-shadow: 0 0.125rem 0.125rem rgba(0, 0, 0, 0.3);
+  -webkit-box-shadow: 0 0.125rem 0.125rem rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0.125rem 0.125rem rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.page-background {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.home-container {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+} 

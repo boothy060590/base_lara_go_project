@@ -1,0 +1,14 @@
+my-db/
+api/tmp/*
+api/main
+api/worker
+error-log
+.idea/
+
+# Ignore environment files
+frontend/.env
+api/.env
+
+# Ignore SSL certificates
+docker/ssl/certs/*.crt
+docker/ssl/certs/*.key

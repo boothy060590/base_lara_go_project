@@ -1,0 +1,148 @@
+/* Common form and phone input styles */
+.input-group {
+  position: relative;
+  margin-bottom: 1.25rem;
+}
+.input-icon {
+  position: absolute;
+  left: 0.9375rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #aaa;
+  z-index: 10;
+  pointer-events: none;
+}
+.with-icon input,
+.with-icon .vue-tel-input {
+  padding-left: 2.5rem;
+}
+/* Visually align the flag in the phone input with the icons */
+.phone-align .vti__flag {
+  margin-left: 0.9375rem;
+}
+/* Make the vue-tel-input container look like .form-control */
+.phone-align .vue-tel-input {
+  width: 100%;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  background: #fff;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  min-height: 2.375rem;
+  padding: 0;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* Remove extra margin/padding from dropdown and align with input */
+.phone-align .vue-tel-input .vti__dropdown {
+  background: #fff;
+  border: none;
+  box-shadow: none;
+  margin: 0;
+  padding: 0 0.5rem 0 0.5rem;
+  height: 2.375rem;
+  display: flex;
+  align-items: center;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Make the input fill the rest of the space and match .form-control */
+.phone-align .vue-tel-input input {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  height: 2.375rem;
+  font-size: 1rem;
+  border-radius: 0.375rem;
+  flex: 1 1 auto;
+  padding: 0 0.75rem;
+  margin: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* Focus state */
+.phone-align .vue-tel-input:focus-within {
+  border-color: #80bdff;
+  outline: 0;
+  box-shadow: 0 0 0 0.125rem rgba(0,123,255,.25);
+}
+.phone-align {
+  margin-bottom: 1.25rem;
+}
+/* Remove padding-left from the country code selector */
+.phone-align .vti__dropdown {
+  padding-left: 0 !important;
+}
+.error-feedback {
+  display: block;
+  color: #d9534f;
+  font-size: 0.95em;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  width: 100%;
+  text-align: left;
+  min-height: 1.2em;
+}
+.alert.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.375rem;
+  font-size: 1.25rem;
+  font-weight: 500;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+/* Password toggle button styles */
+.password-toggle-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 5px;
+  color: #6c757d;
+  transition: color 0.2s ease;
+  z-index: 10;
+}
+
+.password-toggle-btn:hover {
+  color: #495057;
+}
+
+.password-toggle-icon {
+  font-size: 16px;
+}
+
+/* Ensure the input field has enough padding to accommodate the toggle button */
+.form-control {
+  padding-right: 40px;
+}
+
+/* Success banner (alert-success) should match the button height and be closer to the top */
+.alert-success {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px; /* Bootstrap .btn height (approx) */
+  padding: 0 1rem;
+  margin-top: 0; /* Move banner higher */
+  margin-bottom: 1.5rem;
+  border-radius: 0.375rem;
+  font-size: 1rem; /* Match input field */
+  font-weight: 400; /* Match input field */
+  text-align: center;
+  box-sizing: border-box;
+} 

@@ -1,0 +1,63 @@
+@use 'sass:math';
+
+$percentages: 100;
+
+@mixin width-classes {
+    @for $i from 0 through $percentages {
+        .w-#{$i} {
+            min-width: math.percentage(math.div($i, 100));
+            max-width: math.percentage(math.div($i, 100));
+        }
+    }
+}
+
+@include width-classes;
+
+$sizes: 40;
+
+@mixin margin-classes {
+    @for $i from 0 through $sizes {
+        $margin: $i * 0.25rem;
+        .m-#{$i} { margin: $margin; }
+        .ml-#{$i} { margin-left: $margin; }
+        .mr-#{$i} { margin-right: $margin; }
+        .mt-#{$i} { margin-top: $margin; }
+        .mb-#{$i} { margin-bottom: $margin; }
+        .mx-#{$i} { margin-left: $margin; margin-right: $margin; }
+        .my-#{$i} { margin-top: $margin; margin-bottom: $margin; }
+    }
+}
+
+@include margin-classes;
+
+@mixin padding-classes {
+    @for $i from 0 through $sizes {
+        $padding: $i * 0.25rem;
+        .p-#{$i} { padding: $padding; }
+        .pl-#{$i} { padding-left: $padding; }
+        .pr-#{$i} { padding-right: $padding; }
+        .pt-#{$i} { padding-top: $padding; }
+        .pb-#{$i} { padding-bottom: $padding; }
+        .px-#{$i} { padding-left: $padding; padding-right: $padding; }
+        .py-#{$i} { padding-top: $padding; padding-bottom: $padding; }
+    }
+}
+
+@include padding-classes;
+
+.admin-border {
+    border: 2px solid rgb(0, 119, 200);
+    border-radius: 10px;
+    box-shadow: inset 0 1px 1px rgba(0, 119, 200, 0.075);
+    transition: border-color ease-in-out 0.15s, box-shadow ease-in-out 0.15s;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+.text-primary {
+  color: #667eea !important;
+} 
