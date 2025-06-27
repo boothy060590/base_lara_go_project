@@ -7,7 +7,6 @@ import (
 	"base_lara_go_project/app/http/requests"
 	authJobs "base_lara_go_project/app/jobs/auth"
 	"base_lara_go_project/app/models"
-	UserTransformer "base_lara_go_project/app/transformers"
 	"base_lara_go_project/app/utils/token"
 	"net/http"
 
@@ -40,8 +39,8 @@ func Register(c *gin.Context) {
 
 	user := result.(*models.User)
 
-	// Convert to DTO
-	userDTO := ToUserDTO(user)
+	// Convert to DTO using the static method
+	userDTO := auth.FromUser(user)
 
 	// Dispatch UserCreated event asynchronously (like event(new UserWasCreated($user)))
 	userCreatedEvent := &authEvents.UserCreated{User: userDTO}
@@ -95,16 +94,6 @@ func CurrentUser(c *gin.Context) {
 	}
 
 	user := result.(*models.User)
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": UserTransformer.Transform(*user)})
-}
-
-// ToUserDTO converts a *models.User to a UserDTO
-func ToUserDTO(user *models.User) auth.UserDTO {
-	return auth.UserDTO{
-		ID:           user.ID,
-		FirstName:    user.FirstName,
-		LastName:     user.LastName,
-		Email:        user.Email,
-		MobileNumber: user.MobileNumber,
-	}
+	userDTO := auth.FromUser(user)
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": userDTO})
 }
