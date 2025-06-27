@@ -1,8 +1,8 @@
 package token
 
 import (
+	"base_lara_go_project/config"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,7 +12,8 @@ import (
 )
 
 func GenerateToken(userId uint, role string) (string, error) {
-	tokenLifespan, err := strconv.Atoi(os.Getenv("TOKEN_HOUR_LIFESPAN"))
+	appConfig := config.AppConfig()
+	tokenLifespan, err := strconv.Atoi(appConfig["token_hour_lifespan"].(string))
 	if err != nil {
 		return "", err
 	}
@@ -24,16 +25,17 @@ func GenerateToken(userId uint, role string) (string, error) {
 	claims["exp"] = time.Now().Add(time.Hour * time.Duration(tokenLifespan)).Unix()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	return token.SignedString([]byte(os.Getenv("API_SECRET")))
+	return token.SignedString([]byte(appConfig["secret"].(string)))
 }
 
 func IsTokenValid(c *gin.Context) error {
 	tokenString := ExtractToken(c)
+	appConfig := config.AppConfig()
 	_, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(os.Getenv("API_SECRET")), nil
+		return []byte(appConfig["secret"].(string)), nil
 	})
 	if err != nil {
 		return err
@@ -55,11 +57,12 @@ func ExtractToken(c *gin.Context) string {
 
 func ExtractTokenID(c *gin.Context) (uint, error) {
 	tokenString := ExtractToken(c)
+	appConfig := config.AppConfig()
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(os.Getenv("API_SECRET")), nil
+		return []byte(appConfig["secret"].(string)), nil
 	})
 	if err != nil {
 		return 0, err
@@ -77,11 +80,12 @@ func ExtractTokenID(c *gin.Context) (uint, error) {
 
 func ExtractTokenRole(c *gin.Context) (string, error) {
 	tokenString := ExtractToken(c)
+	appConfig := config.AppConfig()
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(os.Getenv("API_SECRET")), nil
+		return []byte(appConfig["secret"].(string)), nil
 	})
 	if err != nil {
 		return "", err

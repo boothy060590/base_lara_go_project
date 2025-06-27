@@ -2,7 +2,7 @@ package facades
 
 import (
 	"base_lara_go_project/app/core"
-	"base_lara_go_project/app/providers"
+	"base_lara_go_project/config"
 	"fmt"
 )
 
@@ -15,7 +15,7 @@ func MailTemplate(to []string, templateName string, data core.EmailTemplateData)
 	}
 
 	// Send the email
-	return providers.SendMail(to, data.Subject, body)
+	return core.SendMail(to, data.Subject, body)
 }
 
 // MailTemplateAsync sends an email using a template asynchronously via queue
@@ -26,8 +26,11 @@ func MailTemplateAsync(to []string, templateName string, data core.EmailTemplate
 		return err
 	}
 
-	// Send the email asynchronously
-	return providers.SendMailAsync(to, data.Subject, body)
+	// Send the email asynchronously to the mail queue from config
+	queueConfig := config.QueueConfig()
+	queues := queueConfig["queues"].(map[string]interface{})
+	queueName := queues["mail"].(string)
+	return core.SendMailAsync(to, data.Subject, body, queueName)
 }
 
 // MailTemplateToUser sends a templated email to a specific user

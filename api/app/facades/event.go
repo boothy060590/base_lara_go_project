@@ -18,16 +18,22 @@ func SetEventDispatcher(dispatcher EventDispatcher) {
 	EventDispatcherInstance = dispatcher
 }
 
-// Event dispatches an event asynchronously (like Laravel's event() helper)
-// Errors are logged internally but don't bubble up to the controller
-func Event(event core.EventInterface) {
-	err := EventDispatcherInstance.DispatchAsync(event)
-	if err != nil {
-		// Log the error internally but don't return it
-		// This prevents event failures from breaking the main flow
-		// In production, you might want to use a proper logger here
-		_ = err // Suppress unused variable warning
+// Event dispatches an event synchronously
+func Event(event interface{}) error {
+	e, ok := event.(core.EventInterface)
+	if !ok {
+		return nil
 	}
+	return EventDispatcherInstance.DispatchSync(e)
+}
+
+// EventAsync dispatches an event asynchronously to the events queue from config
+func EventAsync(event interface{}) error {
+	e, ok := event.(core.EventInterface)
+	if !ok {
+		return nil
+	}
+	return EventDispatcherInstance.DispatchAsync(e)
 }
 
 // EventWithError dispatches an event asynchronously and returns any error

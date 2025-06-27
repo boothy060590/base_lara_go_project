@@ -14,14 +14,7 @@
 
 ### Overview
 
-This application follows a **Laravel-inspired architecture** implemented in Go, featuring:
-
-- **Event-driven architecture** with asynchronous job processing
-- **Service-oriented design** with dependency injection
-- **Facade pattern** for simplified service access
-- **Repository pattern** for data access
-- **Middleware-based HTTP handling**
-- **Queue-based background processing**
+This project implements a Laravel-inspired architecture in Go, featuring an event-driven system with asynchronous processing, multi-queue management, and modern web development practices.
 
 ### Core Architecture Principles
 

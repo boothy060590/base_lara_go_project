@@ -1,33 +1,16 @@
 package providers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
+
+	"base_lara_go_project/app/core"
+	"base_lara_go_project/config"
 
 	"github.com/joho/godotenv"
 	"gopkg.in/gomail.v2"
 )
-
-type MailConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
-	FromName string
-}
-
-type SendMailJob struct {
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
-	Body    string   `json:"body"`
-}
-
-var Mailer *gomail.Dialer
-var MailConfigInstance *MailConfig
 
 func RegisterMailer() {
 	err := godotenv.Load(".env")
@@ -35,13 +18,19 @@ func RegisterMailer() {
 		log.Fatalf("Error loading .env file")
 	}
 
-	// Get mail configuration from environment variables
-	host := os.Getenv("MAIL_HOST")
-	portStr := os.Getenv("MAIL_PORT")
-	username := os.Getenv("MAIL_USERNAME")
-	password := os.Getenv("MAIL_PASSWORD")
-	from := os.Getenv("MAIL_FROM_ADDRESS")
-	fromName := os.Getenv("MAIL_FROM_NAME")
+	// Get mail configuration from config package
+	mailConfig := config.MailConfig()
+	defaultMailer := mailConfig["default"].(string)
+	mailers := mailConfig["mailers"].(map[string]interface{})
+	mailerConfig := mailers[defaultMailer].(map[string]interface{})
+	fromConfig := mailConfig["from"].(map[string]interface{})
+
+	host := mailerConfig["host"].(string)
+	portStr := mailerConfig["port"].(string)
+	username := mailerConfig["username"].(string)
+	password := mailerConfig["password"].(string)
+	from := fromConfig["address"].(string)
+	fromName := fromConfig["name"].(string)
 
 	// Convert port string to integer
 	port, err := strconv.Atoi(portStr)
@@ -50,7 +39,7 @@ func RegisterMailer() {
 	}
 
 	// Create mail configuration
-	MailConfigInstance = &MailConfig{
+	mailConfigInstance := &core.MailConfig{
 		Host:     host,
 		Port:     port,
 		Username: username,
@@ -60,51 +49,11 @@ func RegisterMailer() {
 	}
 
 	// Create mailer dialer
-	Mailer = gomail.NewDialer(host, port, username, password)
+	mailer := gomail.NewDialer(host, port, username, password)
+
+	// Create mail provider and set global instance
+	mailProvider := core.NewMailProvider(mailConfigInstance, mailer)
+	core.SetMailService(mailProvider)
 
 	fmt.Printf("Mailer configured for %s:%d\n", host, port)
-}
-
-// SendMail sends an email using the configured mailer
-func SendMail(to []string, subject, body string) error {
-	m := gomail.NewMessage()
-	m.SetHeader("From", fmt.Sprintf("%s <%s>", MailConfigInstance.FromName, MailConfigInstance.From))
-	m.SetHeader("To", to...)
-	m.SetHeader("Subject", subject)
-	m.SetBody("text/html", body)
-
-	return Mailer.DialAndSend(m)
-}
-
-// SendMailAsync sends an email asynchronously via queue
-func SendMailAsync(to []string, subject, body string) error {
-	// Create mail job data
-	job := SendMailJob{
-		To:      to,
-		Subject: subject,
-		Body:    body,
-	}
-
-	// Marshal job data
-	jobData, err := json.Marshal(job)
-	if err != nil {
-		return fmt.Errorf("failed to marshal job data: %v", err)
-	}
-
-	// Send to queue with job type attribute
-	attributes := map[string]string{
-		"job_type": "send_mail",
-	}
-
-	return SendMessageWithAttributes(string(jobData), attributes)
-}
-
-// ProcessMailJobFromQueue processes a send mail job from the queue
-func ProcessMailJobFromQueue(jobData []byte) error {
-	var job SendMailJob
-	if err := json.Unmarshal(jobData, &job); err != nil {
-		return fmt.Errorf("failed to unmarshal job data: %v", err)
-	}
-
-	return SendMail(job.To, job.Subject, job.Body)
 }

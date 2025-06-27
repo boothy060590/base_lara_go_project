@@ -2,6 +2,7 @@ package facades
 
 import (
 	"base_lara_go_project/app/core"
+	"base_lara_go_project/config"
 )
 
 // JobDispatcher defines the interface for dispatching jobs
@@ -26,4 +27,12 @@ func Dispatch(job core.JobInterface) error {
 // DispatchSync dispatches a job synchronously and returns the result (like Laravel's dispatchSync() helper)
 func DispatchSync(job core.JobInterface) (any, error) {
 	return JobDispatcherInstance.DispatchSync(job)
+}
+
+// DispatchJobAsync dispatches a job asynchronously to the jobs queue from config
+func DispatchJobAsync(job interface{}) error {
+	queueConfig := config.QueueConfig()
+	queues := queueConfig["queues"].(map[string]interface{})
+	queueName := queues["jobs"].(string)
+	return core.DispatchJob(job, queueName)
 }

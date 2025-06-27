@@ -45,7 +45,7 @@ func Register(c *gin.Context) {
 
 	// Dispatch UserCreated event asynchronously (like event(new UserWasCreated($user)))
 	userCreatedEvent := &authEvents.UserCreated{User: userDTO}
-	facades.Event(userCreatedEvent)
+	facades.EventAsync(userCreatedEvent)
 
 	c.JSON(http.StatusOK, gin.H{"message": user.Email + " successfully registered", "roles": user.Roles})
 }

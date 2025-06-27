@@ -3,6 +3,7 @@ package listeners
 import (
 	"base_lara_go_project/app/core"
 	authEvents "base_lara_go_project/app/events/auth"
+	"base_lara_go_project/app/facades"
 	"fmt"
 )
 
@@ -14,6 +15,17 @@ type MailService interface {
 type SendEmailConfirmation struct {
 	BaseListener
 	Event authEvents.UserCreated
+}
+
+// RegisterSelf registers this listener with the event system
+func RegisterSelf() {
+	core.RegisterEvent("UserCreated", func(e core.EventInterface) core.ListenerInterface {
+		listener := &SendEmailConfirmation{}
+		if userCreated, ok := e.(*authEvents.UserCreated); ok {
+			listener.Event = *userCreated
+		}
+		return listener
+	})
 }
 
 func (l *SendEmailConfirmation) Handle(mailService interface{}) error {
@@ -34,16 +46,10 @@ func (l *SendEmailConfirmation) Handle(mailService interface{}) error {
 		return fmt.Errorf("failed to render email template: %v", err)
 	}
 
-	// Cast the mailService to our interface and send the email
-	if mailSvc, ok := mailService.(MailService); ok {
-		err := mailSvc.SendMail([]string{user.Email}, templateData.Subject, body)
-		if err != nil {
-			return fmt.Errorf("failed to send welcome email: %v", err)
-		}
-		fmt.Printf("Welcome email sent successfully to %s\n", user.Email)
-	} else {
-		// Fallback to console output if mail service is not available
-		fmt.Printf("Sending email to %s: %s\nBody: %s\n", user.Email, templateData.Subject, body)
+	// Send email asynchronously via mail queue
+	err = facades.MailAsync([]string{user.Email}, templateData.Subject, body)
+	if err != nil {
+		return fmt.Errorf("failed to queue welcome email: %v", err)
 	}
 
 	return nil
