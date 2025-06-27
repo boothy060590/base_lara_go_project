@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Subject}}</title>
+    <style>
+/* Base Email Styles */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    margin: 0;
+    padding: 0;
+    background-color: #f8f9fa;
+}
+
+.email-container {
+    max-width: 600px;
+    margin: 0 auto;
+    background-color: #ffffff;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.email-body {
+    padding: 30px 20px;
+}
+
+.content-section {
+    margin-bottom: 20px;
+}
+
+/* Responsive Design */
+@media only screen and (max-width: 600px) {
+    .email-container {
+        margin: 0;
+        box-shadow: none;
+    }
+    .email-header, .email-body, .email-footer {
+        padding: 20px 15px;
+    }
+} /* Email Header Styles */
+.email-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 30px 20px;
+    text-align: center;
+}
+
+.email-header h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+} /* Email Footer Styles */
+.email-footer {
+    background-color: #f8f9fa;
+    padding: 20px;
+    text-align: center;
+    border-top: 1px solid #e9ecef;
+}
+
+.email-footer p {
+    margin: 5px 0;
+    font-size: 14px;
+    color: #6c757d;
+} /* Button Styles */
+.btn {
+    display: inline-block;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: 500;
+    margin: 20px 0;
+}
+
+.btn:hover {
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+} /* Component Styles */
+.highlight-box {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 15px;
+    margin: 20px 0;
+    border-radius: 4px;
+}
+
+.info-box {
+    background-color: #f3e5f5;
+    border-left: 4px solid #9c27b0;
+    padding: 15px;
+    margin: 20px 0;
+    border-radius: 4px;
+} 
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="email-header">
+            <h1>{{.AppName}}</h1>
+        </div>
+        
+        <div class="email-body">
+            {{template "content" .}}
+        </div>
+        
+        <div class="email-footer">
+            <p>&copy; {{.Year}} {{.AppName}}. All rights reserved.</p>
+            <p>This email was sent to {{.RecipientEmail}}</p>
+            <p>If you have any questions, please contact our support team.</p>
+        </div>
+    </div>
+</body>
+</html> 

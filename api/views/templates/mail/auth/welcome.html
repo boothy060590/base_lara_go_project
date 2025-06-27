@@ -1,0 +1,35 @@
+{{define "content"}}
+<div class="content-section">
+    <h2>Welcome to {{.AppName}}, {{.User.FirstName}}!</h2>
+    
+    <p>Thank you for registering with {{.AppName}}. Your account has been created successfully and you're now part of our community!</p>
+    
+    <div class="highlight-box">
+        <h3>Your Account Details</h3>
+        <p><strong>Name:</strong> {{.User.FirstName}} {{.User.LastName}}</p>
+        <p><strong>Email:</strong> {{.User.Email}}</p>
+        {{if .User.MobileNumber}}
+        <p><strong>Mobile:</strong> {{.User.MobileNumber}}</p>
+        {{end}}
+    </div>
+    
+    <div class="info-box">
+        <h3>What's Next?</h3>
+        <p>You can now:</p>
+        <ul>
+            <li>Sign in to your account</li>
+            <li>Complete your profile</li>
+            <li>Explore our features</li>
+            <li>Connect with other users</li>
+        </ul>
+    </div>
+    
+    <div style="text-align: center; margin: 30px 0;">
+        <a href="{{.LoginURL}}" class="btn">Sign In to Your Account</a>
+    </div>
+    
+    <p>If you have any questions or need assistance, don't hesitate to reach out to our support team. We're here to help!</p>
+    
+    <p>Best regards,<br>The {{.AppName}} Team</p>
+</div>
+{{end}} 

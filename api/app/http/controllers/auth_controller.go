@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"base_lara_go_project/app/core"
 	"base_lara_go_project/app/data_objects/auth"
 	authEvents "base_lara_go_project/app/events/auth"
 	"base_lara_go_project/app/facades"
@@ -96,4 +97,31 @@ func CurrentUser(c *gin.Context) {
 	user := result.(*models.User)
 	userDTO := auth.FromUser(user)
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": userDTO})
+}
+
+// TestEmailTemplate demonstrates the new email templating system
+func TestEmailTemplate(c *gin.Context) {
+	// Create a test user
+	testUser := &models.User{
+		FirstName:    "John",
+		LastName:     "Doe",
+		Email:        "john.doe@example.com",
+		MobileNumber: "+1234567890",
+	}
+
+	// Send a test email using the template facade
+	err := facades.MailTemplateToUser(testUser, "auth/welcome", core.EmailTemplateData{
+		Subject:        "Test Email Template",
+		AppName:        "Base Laravel Go Project",
+		RecipientEmail: testUser.Email,
+		User:           testUser,
+		LoginURL:       "https://app.baselaragoproject.test/login",
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send test email: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Test email sent successfully to " + testUser.Email})
 }

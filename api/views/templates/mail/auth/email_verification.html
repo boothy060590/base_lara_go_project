@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="content-section">
+    <h2>Verify Your Email Address</h2>
+    
+    <p>Hello {{.User.FirstName}},</p>
+    
+    <p>Thank you for registering with {{.AppName}}! To complete your registration, please verify your email address by clicking the button below.</p>
+    
+    <div class="highlight-box">
+        <h3>Email Verification Required</h3>
+        <p>Verifying your email address helps us ensure the security of your account and allows you to access all features of {{.AppName}}.</p>
+    </div>
+    
+    <div style="text-align: center; margin: 30px 0;">
+        <a href="{{.VerificationURL}}" class="btn">Verify Email Address</a>
+    </div>
+    
+    <div class="info-box">
+        <h3>What happens after verification?</h3>
+        <p>Once you verify your email:</p>
+        <ul>
+            <li>Your account will be fully activated</li>
+            <li>You'll have access to all features</li>
+            <li>You can start using {{.AppName}} immediately</li>
+        </ul>
+    </div>
+    
+    <p>If you didn't create an account with {{.AppName}}, you can safely ignore this email.</p>
+    
+    <p>Best regards,<br>The {{.AppName}} Team</p>
+</div>
+{{end}} 

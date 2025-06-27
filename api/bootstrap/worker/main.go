@@ -20,6 +20,11 @@ func main() {
 	core.InitializeRegistry()
 	core.InitializeEventDispatcher()
 
+	// Initialize email template engine
+	if err := providers.RegisterMailTemplateEngine(); err != nil {
+		log.Fatalf("Failed to initialize email template engine: %v", err)
+	}
+
 	// Set up the mail function for event dispatcher
 	core.SetSendMailFunc(providers.SendMail)
 
