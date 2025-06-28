@@ -25,6 +25,13 @@ func NewBaseModel() *BaseModelData {
 	}
 }
 
+// Initialize initializes the base model data
+func (b *BaseModelData) Initialize() {
+	if b.data == nil {
+		b.data = make(map[string]interface{})
+	}
+}
+
 // Set sets a value in the base model
 func (b *BaseModelData) Set(key string, value interface{}) {
 	b.data[key] = value

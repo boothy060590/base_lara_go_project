@@ -82,6 +82,11 @@ func (d *DatabaseModel) Exists() bool {
 
 // BeforeCreate is a GORM hook that runs before creation
 func (d *DatabaseModel) BeforeCreate(tx *gorm.DB) error {
+	// Initialize the data map if it's nil
+	if d.data == nil {
+		d.data = make(map[string]interface{})
+	}
+
 	// Populate base model data from GORM model
 	d.Set("id", d.Model.ID)
 	d.Set("created_at", d.Model.CreatedAt)
@@ -94,6 +99,11 @@ func (d *DatabaseModel) BeforeCreate(tx *gorm.DB) error {
 
 // AfterFind is a GORM hook that runs after finding
 func (d *DatabaseModel) AfterFind(tx *gorm.DB) error {
+	// Initialize the data map if it's nil
+	if d.data == nil {
+		d.data = make(map[string]interface{})
+	}
+
 	// Populate base model data from GORM model
 	d.Set("id", d.Model.ID)
 	d.Set("created_at", d.Model.CreatedAt)

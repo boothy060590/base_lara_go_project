@@ -63,14 +63,21 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// Check if user has roles
+	roles := user.GetRoles()
+	if len(roles) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User has no roles assigned."})
+		return
+	}
+
 	// Generate token
-	token, err := token.GenerateToken(user.GetID(), user.GetRoles()[0].GetName())
+	token, err := token.GenerateToken(user.GetID(), roles[0].GetName())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"token": token, "role": user.GetRoles()[0].GetName()})
+	c.JSON(http.StatusOK, gin.H{"token": token, "role": roles[0].GetName()})
 }
 
 func CurrentUser(c *gin.Context) {

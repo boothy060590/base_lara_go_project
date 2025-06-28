@@ -162,14 +162,7 @@ func (s *UserService) CreateUser(userData map[string]interface{}, roleNames []st
 		}
 	}
 
-	// Hash password if provided
-	if password, ok := userData["password"].(string); ok {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if err != nil {
-			return nil, err
-		}
-		userData["password"] = string(hashedPassword)
-	}
+	// Note: Password hashing is handled by the User model's BeforeSave hook
 
 	// Create user
 	user, err := s.userRepo.Create(userData)
@@ -177,9 +170,42 @@ func (s *UserService) CreateUser(userData map[string]interface{}, roleNames []st
 		return nil, err
 	}
 
-	// Assign roles (this would typically involve a RoleService)
-	// For now, we'll keep it simple
-	// TODO: Implement role assignment logic
+	// Assign roles
+	if len(roleNames) > 0 {
+		// Get role repository
+		roleRepo, exists := repositories.GetRoleRepository()
+		if !exists {
+			return nil, errors.New("role repository not found")
+		}
+
+		// Find and assign each role
+		for _, roleName := range roleNames {
+			role, err := roleRepo.FindByName(roleName)
+			if err != nil {
+				// Log the error but continue with other roles
+				continue
+			}
+
+			// Assign role to user using GORM association
+			// Use the repository's database connection to assign the role
+			// This is a simplified approach - in a real app, you'd have a proper role assignment method
+			// Get the database connection from the repository
+			db := s.userRepo.GetDB()
+			if db != nil {
+				// Create the association in the user_roles table
+				err = db.Exec("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)", user.GetID(), role.ID).Error
+				if err != nil {
+					continue
+				}
+			}
+		}
+
+		// Reload user with roles
+		user, err = s.userRepo.FindByID(user.GetID())
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return user, nil
 }

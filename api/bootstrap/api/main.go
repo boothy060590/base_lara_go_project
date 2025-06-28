@@ -23,6 +23,8 @@ func main() {
 	providers.RegisterJobDispatcher()
 	providers.RegisterMessageProcessor()
 	providers.RegisterEventDispatcher()
+	providers.RegisterRepository()
+	providers.RegisterServices()
 
 	// Initialize core systems
 	core.InitializeRegistry()

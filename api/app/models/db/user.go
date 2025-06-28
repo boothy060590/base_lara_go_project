@@ -4,6 +4,8 @@ import (
 	"base_lara_go_project/app/core"
 	"base_lara_go_project/app/models/interfaces"
 
+	"strings"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -39,11 +41,14 @@ func (u *User) GetID() uint {
 
 // BeforeSave is a GORM hook that hashes the password before saving
 func (user *User) BeforeSave(tx *gorm.DB) (err error) {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return err
+	// Only hash if not already hashed
+	if !strings.HasPrefix(user.Password, "$2a$") && !strings.HasPrefix(user.Password, "$2b$") && !strings.HasPrefix(user.Password, "$2y$") {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		user.Password = string(hashedPassword)
 	}
-	user.Password = string(hashedPassword)
 	return nil
 }
 

@@ -26,6 +26,11 @@ func NewUserRepository(db *gorm.DB, cache core.CacheInterface) *UserRepository {
 	}
 }
 
+// GetDB returns the database connection
+func (r *UserRepository) GetDB() *gorm.DB {
+	return r.db
+}
+
 // FindByID finds a user by ID, trying cache first then database
 func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
 	// Try to get from cache first
@@ -304,6 +309,9 @@ func (r *UserRepository) convertDBToCache(dbUser *db.User) *cache.User {
 		MobileNumber:  dbUser.MobileNumber,
 	}
 
+	// Initialize the data map
+	cacheUser.Initialize()
+
 	// Set base model data
 	cacheUser.Set("id", dbUser.ID)
 	cacheUser.Set("created_at", dbUser.CreatedAt)
@@ -318,6 +326,10 @@ func (r *UserRepository) convertDBToCache(dbUser *db.User) *cache.User {
 			Name:        dbRole.Name,
 			Description: dbRole.Description,
 		}
+
+		// Initialize role data map
+		cacheRole.Initialize()
+
 		cacheRole.Set("id", dbRole.ID)
 		cacheRole.Set("created_at", dbRole.CreatedAt)
 		cacheRole.Set("updated_at", dbRole.UpdatedAt)
@@ -328,6 +340,10 @@ func (r *UserRepository) convertDBToCache(dbUser *db.User) *cache.User {
 				Name:        dbPermission.Name,
 				Description: dbPermission.Description,
 			}
+
+			// Initialize permission data map
+			cachePermission.Initialize()
+
 			cachePermission.Set("id", dbPermission.ID)
 			cachePermission.Set("created_at", dbPermission.CreatedAt)
 			cachePermission.Set("updated_at", dbPermission.UpdatedAt)
