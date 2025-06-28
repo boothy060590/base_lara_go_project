@@ -7,6 +7,10 @@ type UserInterface interface {
 	GetFirstName() string
 	GetLastName() string
 	GetFullName() string
+	GetPassword() string
+	GetRoles() []RoleInterface
+	GetMobileNumber() string
+	GetResetPassword() bool
 	HasRole(roleName string) bool
 	HasPermission(permissionName string) bool
 }

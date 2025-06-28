@@ -1,6 +1,10 @@
 package facades
 
-import "base_lara_go_project/app/core"
+import (
+	"base_lara_go_project/app/core"
+
+	"gorm.io/gorm"
+)
 
 // DB facade provides Laravel-style database operations
 type DB struct{}
@@ -78,6 +82,11 @@ func (db *DB) Limit(limit int) core.DatabaseInterface {
 // Offset adds an offset clause
 func (db *DB) Offset(offset int) core.DatabaseInterface {
 	return core.DatabaseInstance.Offset(offset)
+}
+
+// GetDB returns the underlying GORM DB instance
+func (db *DB) GetDB() *gorm.DB {
+	return core.DatabaseInstance.GetDB()
 }
 
 // Global DB instance

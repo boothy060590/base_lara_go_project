@@ -7,6 +7,9 @@ A Go-based web application with Laravel-style architecture, featuring async even
 ## 🚀 Features
 
 - **Laravel-Style Architecture**: Familiar patterns and structure for Laravel developers
+- **Service Layer Architecture**: Clean separation between business logic and data access
+- **Service Facades**: Laravel-style static access to services
+- **Service Decorators**: Cross-cutting concerns (logging, caching, auditing)
 - **Async Event Processing**: Event-driven architecture with queue-based processing
 - **Mail Queue Management**: Asynchronous email sending via dedicated mail queue
 - **Multi-Queue System**: Separate queues for jobs, mail, and events
@@ -20,11 +23,25 @@ A Go-based web application with Laravel-style architecture, featuring async even
 
 ### Core Components
 
+- **Service Layer**: Business logic with proper separation from data access
+- **Repository Layer**: Data persistence and retrieval with caching
+- **Service Facades**: Laravel-style static access to services
+- **Service Decorators**: Cross-cutting concerns (logging, caching, auditing)
 - **Event System**: Async event dispatching and processing
 - **Queue System**: Multi-queue processing with ElasticMQ
 - **Mail System**: Template-based email sending with queue support
 - **Job System**: Background job processing
 - **Authentication**: JWT-based user authentication and authorization
+
+### Architecture Layers
+
+```
+Controllers → Services → Repositories → Models
+     ↓           ↓           ↓           ↓
+  Facades   Business Logic  CRUD      Cache/DB
+     ↓           ↓
+Decorators  Cross-Cutting
+```
 
 ### Queue Structure
 
@@ -90,7 +107,17 @@ The application uses a hot-reload system for both frontend and backend:
 base_lara_go_project/
 ├── api/                    # Go backend application
 │   ├── app/
-│   │   ├── core/          # Core business logic
+│   │   ├── core/          # Core business logic and interfaces
+│   │   │   ├── service_interfaces.go    # Base service interfaces
+│   │   │   ├── service_decorators.go    # Cross-cutting concerns
+│   │   │   ├── base_service.go          # Base service implementation
+│   │   │   └── ...
+│   │   ├── services/      # Business logic services
+│   │   │   └── user_service.go          # User business logic
+│   │   ├── repositories/  # Data access layer
+│   │   │   └── user_repository.go       # User data access
+│   │   ├── facades/       # Service facades
+│   │   │   └── service.go               # Laravel-style static access
 │   │   ├── events/        # Event definitions
 │   │   ├── jobs/          # Background jobs
 │   │   ├── listeners/     # Event listeners
@@ -140,6 +167,22 @@ MAIL_FROM_ADDRESS=no-reply@baselaragoproject.test
 ```
 
 ## 📚 Usage Examples
+
+### Service Layer Usage
+
+```go
+// Laravel-style facade usage
+user, err := facades.CreateUser(userData, roles)
+user, err := facades.AuthenticateUser(email, password)
+
+// Service with decorators for cross-cutting concerns
+loggingDecorator := core.NewLoggingDecorator[interfaces.UserInterface](userService, logger)
+cachingDecorator := core.NewCachingDecorator[interfaces.UserInterface](userService, cache, 30*time.Minute)
+
+// Use decorated service
+user, err := loggingDecorator.CreateUser(userData, roles) // Automatically logged
+user, err := cachingDecorator.AuthenticateUser(email, password) // Automatically cached
+```
 
 ### Event Processing
 
@@ -208,6 +251,7 @@ Our Laravel-inspired Go architecture provides exceptional performance while main
 - **Zero Wait Time**: 50ms polling vs Laravel's 20-second polling
 - **Compiled Performance**: No PHP interpreter overhead
 - **Efficient Memory**: Direct memory access and optimized garbage collection
+- **Service Decorators**: Cross-cutting concerns without performance impact
 
 For detailed performance analysis, optimization strategies, and benchmarking, see [Performance Documentation](docs/PERFORMANCE.md).
 
@@ -238,6 +282,7 @@ curl -X POST https://api.baselaragoproject.test/v1/auth/register \
 ## 📖 Documentation
 
 - [Architecture Documentation](docs/ARCHITECTURE.md)
+- [Service vs Repository Separation](docs/SERVICE_VS_REPOSITORY.md)
 - [Performance Analysis & Optimization](docs/PERFORMANCE.md)
 - [API Documentation](docs/API.md)
 - [Development Guide](docs/DEVELOPMENT.md)

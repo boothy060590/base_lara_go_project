@@ -3,10 +3,11 @@
 ## Table of Contents
 
 1. [Software Architecture](#software-architecture)
-2. [API Implementation](#api-implementation)
-3. [Frontend Implementation](#frontend-implementation)
-4. [Docker Infrastructure](#docker-infrastructure)
-5. [Development Workflow](#development-workflow)
+2. [Service Layer Architecture](#service-layer-architecture)
+3. [API Implementation](#api-implementation)
+4. [Frontend Implementation](#frontend-implementation)
+5. [Docker Infrastructure](#docker-infrastructure)
+6. [Development Workflow](#development-workflow)
 
 ---
 
@@ -14,23 +15,30 @@
 
 ### Overview
 
-This project implements a Laravel-inspired architecture in Go, featuring an event-driven system with asynchronous processing, multi-queue management, and modern web development practices.
+This project implements a Laravel-inspired architecture in Go, featuring a service layer with proper separation of concerns, event-driven system with asynchronous processing, multi-queue management, and modern web development practices.
 
 ### Core Architecture Principles
 
 #### 1. Separation of Concerns
 - **API Layer**: HTTP controllers and middleware
 - **Service Layer**: Business logic and orchestration
-- **Data Layer**: Models, DTOs, and database operations
+- **Repository Layer**: Data persistence and retrieval
+- **Model Layer**: Data models and interfaces
 - **Infrastructure Layer**: External services, queues, and mail
 
-#### 2. Dependency Injection
+#### 2. Service Layer Architecture
+- **Services**: Handle business logic and validation
+- **Repositories**: Handle data access and caching
+- **Facades**: Provide Laravel-style static access
+- **Decorators**: Handle cross-cutting concerns
+
+#### 3. Dependency Injection
 - Service providers register dependencies
 - Interfaces define contracts
 - Facades provide simplified access
 - Core package contains fundamental interfaces
 
-#### 3. Event-Driven Design
+#### 4. Event-Driven Design
 - Events decouple business logic
 - Listeners handle side effects
 - Asynchronous processing via queues
@@ -58,6 +66,218 @@ This project implements a Laravel-inspired architecture in Go, featuring an even
 
 ---
 
+## Service Layer Architecture
+
+### Overview
+
+The service layer provides a clean separation between business logic and data access, following Laravel-style patterns with facades and decorators for cross-cutting concerns.
+
+### Architecture Layers
+
+```
+Controllers → Services → Repositories → Models
+     ↓           ↓           ↓           ↓
+  Facades   Business Logic  CRUD      Cache/DB
+     ↓           ↓
+Decorators  Cross-Cutting
+```
+
+### Service Layer Components
+
+#### 1. Service Interfaces
+Base interfaces for common CRUD operations:
+
+```go
+type BaseServiceInterface[T any] interface {
+    // Create operations
+    Create(data map[string]interface{}) (T, error)
+    CreateWithContext(ctx context.Context, data map[string]interface{}) (T, error)
+    
+    // Read operations
+    FindByID(id uint) (T, error)
+    FindByField(field string, value interface{}) (T, error)
+    All() ([]T, error)
+    Paginate(page, perPage int) ([]T, int64, error)
+    
+    // Update operations
+    Update(id uint, data map[string]interface{}) (T, error)
+    UpdateOrCreate(conditions map[string]interface{}, data map[string]interface{}) (T, error)
+    
+    // Delete operations
+    Delete(id uint) error
+    DeleteWhere(conditions map[string]interface{}) error
+    
+    // Utility operations
+    Exists(id uint) (bool, error)
+    Count() (int64, error)
+    CountWhere(conditions map[string]interface{}) (int64, error)
+}
+```
+
+#### 2. Service Facades
+Laravel-style static access to services:
+
+```go
+// Laravel-style facade usage
+user, err := facades.CreateUser(userData, roles)
+user, err := facades.AuthenticateUser(email, password)
+
+// Facade implementation
+type UserServiceFacade struct{}
+
+func (u *UserServiceFacade) Create(userData map[string]interface{}, roleNames []string) (interfaces.UserInterface, error) {
+    if userService, ok := globalUserService.(interface {
+        CreateUser(userData map[string]interface{}, roleNames []string) (interfaces.UserInterface, error)
+    }); ok {
+        return userService.CreateUser(userData, roleNames)
+    }
+    return nil, errors.New("user service not found")
+}
+```
+
+#### 3. Service Decorators
+Cross-cutting concerns without modifying core services:
+
+```go
+// Add logging decorator
+logger := log.New(log.Writer(), "[USER_SERVICE] ", log.LstdFlags)
+loggingDecorator := core.NewLoggingDecorator[interfaces.UserInterface](userService, logger)
+
+// Add caching decorator
+cachingDecorator := core.NewCachingDecorator[interfaces.UserInterface](
+    userService, 
+    facades.CacheInstance, 
+    30*time.Minute,
+)
+
+// Use decorated service
+user, err := loggingDecorator.CreateUser(data)
+user, err := cachingDecorator.AuthenticateUser(email, password)
+```
+
+### Service vs Repository Separation
+
+#### Repository Layer (Data Access)
+**Purpose**: Handle data persistence and retrieval
+
+**Responsibilities**:
+- CRUD operations (Create, Read, Update, Delete)
+- Query building and execution
+- Cache management
+- Database-specific logic
+- Data mapping between models
+
+**Example**:
+```go
+type UserRepository struct {
+    db    *gorm.DB
+    cache core.CacheInterface
+}
+
+func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
+    // Try cache first
+    if cached, exists := r.cache.Get(cacheKey); exists {
+        return cached, nil
+    }
+    
+    // Get from database
+    dbUser := &db.User{}
+    err := r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+    
+    // Convert and cache
+    cacheUser := r.convertDBToCache(dbUser)
+    r.storeInCache(cacheUser)
+    
+    return cacheUser, nil
+}
+```
+
+#### Service Layer (Business Logic)
+**Purpose**: Handle business rules and orchestration
+
+**Responsibilities**:
+- Business validation
+- Complex business operations
+- Orchestrating multiple repositories
+- Business rule enforcement
+- Domain-specific operations
+- Security checks
+
+**Example**:
+```go
+type UserService struct {
+    userRepo *repositories.UserRepository
+}
+
+func (s *UserService) CreateUser(userData map[string]interface{}, roleNames []string) (interfaces.UserInterface, error) {
+    // Business validation
+    if err := s.validateUserData(userData); err != nil {
+        return nil, err
+    }
+
+    // Business rule: Check if user already exists
+    if email, ok := userData["email"].(string); ok {
+        existingUser, _ := s.userRepo.FindByEmail(email)
+        if existingUser != nil {
+            return nil, errors.New("user with this email already exists")
+        }
+    }
+
+    // Business logic: Hash password
+    if password, ok := userData["password"].(string); ok {
+        hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+        if err != nil {
+            return nil, err
+        }
+        userData["password"] = string(hashedPassword)
+    }
+
+    // Delegate to repository
+    return s.userRepo.Create(userData)
+}
+```
+
+### Cross-Cutting Concerns
+
+Cross-cutting concerns are aspects that affect multiple parts of your application:
+
+- **Logging** - Every operation needs logging
+- **Caching** - Multiple services need caching
+- **Auditing** - Track changes across the system
+- **Security** - Authentication/authorization
+- **Performance Monitoring** - Track execution times
+
+**Without decorators**, you'd have to add this code to every service method:
+```go
+// ❌ BAD: Scattered throughout codebase
+func (s *UserService) CreateUser(data map[string]interface{}) (interfaces.UserInterface, error) {
+    log.Printf("Creating user...") // Logging
+    start := time.Now()           // Performance monitoring
+    
+    // Business logic...
+    
+    duration := time.Since(start)
+    log.Printf("User created in %v", duration)
+    return user, nil
+}
+```
+
+**With decorators**, you add it once and reuse:
+```go
+// ✅ GOOD: Add once, use everywhere
+loggingDecorator := core.NewLoggingDecorator(userService, logger)
+cachingDecorator := core.NewCachingDecorator(userService, cache, 30*time.Minute)
+
+// Automatically logged and cached
+user, err := loggingDecorator.CreateUser(data)
+user, err := cachingDecorator.AuthenticateUser(email, password)
+```
+
+---
+
 ## API Implementation
 
 ### Technology Stack
@@ -76,6 +296,9 @@ This project implements a Laravel-inspired architecture in Go, featuring an even
 api/
 ├── app/
 │   ├── core/                    # Core interfaces and base types
+│   │   ├── service_interfaces.go    # Base service interfaces
+│   │   ├── service_decorators.go    # Cross-cutting concerns
+│   │   ├── base_service.go          # Base service implementation
 │   │   ├── base_dto.go         # Base DTO interface
 │   │   ├── base_model.go       # Base model with common fields
 │   │   ├── database.go         # Database connection and configuration
@@ -85,17 +308,22 @@ api/
 │   │   ├── queue_worker.go     # Queue worker implementation
 │   │   ├── register.go         # Service registration
 │   │   └── registry.go         # Service registry
+│   ├── services/               # Business logic services
+│   │   └── user_service.go     # User business logic
+│   ├── repositories/           # Data access layer
+│   │   └── user_repository.go  # User data access
+│   ├── facades/                # Service facades
+│   │   ├── service.go          # Service facades
+│   │   ├── database.go         # Database facade
+│   │   ├── event.go            # Event facade
+│   │   ├── job.go              # Job facade
+│   │   └── mail.go             # Mail facade
 │   ├── data_objects/           # Data Transfer Objects
 │   │   └── auth/
 │   │       └── user_dto.go     # User DTO implementation
 │   ├── events/                 # Event definitions
 │   │   └── auth/
 │   │       └── user_created.go # User creation event
-│   ├── facades/                # Service facades
-│   │   ├── database.go         # Database facade
-│   │   ├── event.go            # Event facade
-│   │   ├── job.go              # Job facade
-│   │   └── mail.go             # Mail facade
 │   ├── http/                   # HTTP layer
 │   │   ├── controllers/        # HTTP controllers
 │   │   ├── middlewares/        # HTTP middlewares
@@ -110,12 +338,16 @@ api/
 │   │   └── send_email_confirmation.go
 │   ├── models/                 # Database models
 │   │   ├── interfaces/         # Model interfaces
-│   │   ├── category.go
-│   │   ├── permission.go
-│   │   ├── role.go
-│   │   ├── service.go
-│   │   └── user.go
+│   │   ├── db/                 # Database models
+│   │   │   ├── category.go
+│   │   │   ├── permission.go
+│   │   │   ├── role.go
+│   │   │   ├── service.go
+│   │   │   └── user.go
+│   │   └── cache/              # Cache models
+│   │       └── user.go
 │   ├── providers/              # Service providers
+│   │   ├── service_provider.go # Service registration
 │   │   ├── database_service_provider.go
 │   │   ├── event_dispatcher_provider.go
 │   │   ├── form_field_validators_provider.go
@@ -153,11 +385,19 @@ api/
 Service providers register dependencies and configure services:
 
 ```go
-// Example: Database Service Provider
-func (p *DatabaseServiceProvider) Register() {
-    // Register database connection
-    // Configure GORM
-    // Set up migrations
+// Example: Service Provider
+func RegisterServices() {
+    // Create base user service
+    userService, err := services.NewUserService()
+    if err == nil {
+        // Register the base service
+        GlobalServiceContainer.Register("user", userService)
+        
+        // Set up the service facade
+        facades.SetUserService(userService)
+        
+        log.Println("User service registered successfully")
+    }
 }
 ```
 
@@ -165,13 +405,40 @@ func (p *DatabaseServiceProvider) Register() {
 Facades provide simplified access to complex services:
 
 ```go
-// Example: Database Facade
-func GetDB() *gorm.DB {
-    return database.GetDB()
+// Example: Service Facade
+func CreateUser(userData map[string]interface{}, roleNames []string) (interfaces.UserInterface, error) {
+    return User().Create(userData, roleNames)
 }
 ```
 
-#### 3. Event-Driven Architecture
+#### 3. Decorator Pattern
+Decorators add functionality without modifying existing code:
+
+```go
+// Example: Logging Decorator
+type LoggingDecorator[T any] struct {
+    *ServiceDecorator[T]
+    logger *log.Logger
+}
+
+func (l *LoggingDecorator[T]) Create(data map[string]interface{}) (T, error) {
+    start := time.Now()
+    l.logger.Printf("Creating %T with data: %v", *new(T), data)
+    
+    result, err := l.service.Create(data)
+    
+    duration := time.Since(start)
+    if err != nil {
+        l.logger.Printf("Failed to create %T after %v: %v", *new(T), duration, err)
+    } else {
+        l.logger.Printf("Successfully created %T after %v", *new(T), duration)
+    }
+    
+    return result, err
+}
+```
+
+#### 4. Event-Driven Architecture
 Events decouple business logic from side effects:
 
 ```go
@@ -187,7 +454,7 @@ func (l *SendEmailConfirmationListener) Handle(event interface{}) error {
 }
 ```
 
-#### 4. Repository Pattern
+#### 5. Repository Pattern
 Models implement interfaces for data access:
 
 ```go
@@ -198,77 +465,23 @@ type UserInterface interface {
 }
 ```
 
-### Authentication & Authorization
+### Service Layer Benefits
 
-#### JWT Implementation
-- **Token Generation**: Custom token utility
-- **Middleware**: JWT validation middleware
-- **Role-Based Access**: Role middleware for route protection
+1. **Clear Responsibilities** - Each layer has a specific purpose
+2. **Testability** - Easy to mock repositories and test business logic
+3. **Maintainability** - Changes to business logic don't affect data access
+4. **Reusability** - Cross-cutting concerns can be reused across services
+5. **Performance** - Caching and logging can be added without modifying business logic
+6. **Scalability** - Easy to add new services and repositories following the same pattern
 
-#### User Roles & Permissions
-- **Roles**: Admin, Customer, Engineer
-- **Permissions**: Granular permission system
-- **Pivot Tables**: Many-to-many relationships
+### Best Practices
 
-### Database Design
-
-#### Core Tables
-- **users**: User accounts and profiles
-- **roles**: User roles (admin, customer, engineer)
-- **permissions**: System permissions
-- **role_user**: Role assignments
-- **permission_role**: Permission assignments
-
-#### Migration System
-- **GORMigrate**: Database migration tool
-- **Version Control**: Migration files with timestamps
-- **Rollback Support**: Migration rollback capabilities
-
-### Queue System
-
-#### Architecture
-- **Producer**: API dispatches jobs/events
-- **Consumer**: Worker processes messages
-- **Queue**: ElasticMQ (SQS-compatible)
-
-#### Job Processing
-```go
-// Job structure
-type Job struct {
-    Type    string      `json:"type"`
-    Data    interface{} `json:"data"`
-    Attempt int         `json:"attempt"`
-}
-
-// Event structure
-type Event struct {
-    Type    string      `json:"type"`
-    Data    interface{} `json:"data"`
-    Time    time.Time   `json:"time"`
-}
-```
-
-#### Worker Implementation
-- **Polling**: Continuous message polling
-- **Processing**: Job/event type routing
-- **Error Handling**: Retry logic with backoff
-- **Graceful Shutdown**: Signal handling
-
-### Mail System
-
-#### SMTP Configuration
-- **Development**: MailHog for testing
-- **Production**: Configurable SMTP server
-- **Templates**: HTML email templates
-
-#### Mail Facade
-```go
-// Synchronous sending
-err := providers.SendMail(recipients, subject, body)
-
-// Asynchronous sending
-err := providers.SendMailAsync(recipients, subject, body)
-```
+1. **Services should contain business logic, not data access**
+2. **Repositories should handle data persistence, not business rules**
+3. **Use decorators for cross-cutting concerns, not inline code**
+4. **Facades provide a clean API for controllers**
+5. **Keep services focused on one domain**
+6. **Test business logic in isolation from data access**
 
 ---
 
@@ -276,455 +489,248 @@ err := providers.SendMailAsync(recipients, subject, body)
 
 ### Technology Stack
 
-- **Framework**: Vue.js 3.2.13
-- **Build Tool**: Vite 7.0.0
-- **State Management**: Pinia 2.3.1 + Vuex 4.1.0
-- **Routing**: Vue Router 4.3.2
-- **UI Framework**: Bootstrap 5.3.3
-- **Validation**: Vee-validate 4.12.8 + Yup 1.4.0
-- **HTTP Client**: Axios 1.7.2
-- **Styling**: SCSS with custom components
+- **Framework**: Vue.js 3 with Composition API
+- **Build Tool**: Vite
+- **Styling**: SCSS with modern CSS features
+- **HTTP Client**: Axios
+- **Form Validation**: Custom validators
+- **State Management**: Vuex (if needed)
 
 ### Project Structure
 
 ```
 frontend/
-├── public/                     # Static assets
 ├── src/
-│   ├── assets/                 # Static resources
-│   │   ├── logo.png
-│   │   └── scss/               # SCSS stylesheets
-│   │       ├── button.scss
-│   │       ├── card.scss
-│   │       ├── form.scss
-│   │       └── utilities.scss
-│   ├── components/             # Reusable components
-│   │   └── form/               # Form components
+│   ├── components/            # Reusable Vue components
+│   │   └── form/             # Form components
 │   │       ├── EmailFormField.vue
 │   │       ├── PasswordFormField.vue
 │   │       ├── TelephoneFormField.vue
 │   │       └── TextFormField.vue
-│   ├── config.js               # Application configuration
-│   ├── form_validators/        # Form validation
-│   │   ├── index.js
-│   │   ├── login_validator.js
-│   │   └── register_validator.js
-│   ├── helpers/                # Utility functions
-│   │   └── api/
-│   │       ├── api.js          # Base API configuration
-│   │       └── auth/
-│   │           └── authApi.js  # Auth-specific API calls
-│   ├── Pages/                  # Page components
-│   │   ├── auth/
+│   ├── Pages/                # Page components
+│   │   ├── auth/             # Authentication pages
 │   │   │   ├── login/
-│   │   │   │   ├── login.scss
-│   │   │   │   └── Login.vue
+│   │   │   │   ├── Login.vue
+│   │   │   │   └── login.scss
 │   │   │   └── register/
-│   │   │       ├── Register.scss
-│   │   │       └── Register.vue
-│   │   └── home/
+│   │   │       ├── Register.vue
+│   │   │       └── Register.scss
+│   │   └── home/             # Home pages
 │   │       ├── admin/
 │   │       │   └── Admin.vue
 │   │       ├── customer/
 │   │       │   └── Customer.vue
-│   │       ├── engineer/
-│   │       │   └── Engineer.vue
 │   │       └── Home.vue
-│   ├── plugins/                # Vue plugins
-│   │   └── font-awesome.js
-│   ├── router.js               # Vue Router configuration
-│   ├── store/                  # State management
-│   │   └── auth.js
-│   ├── App.vue                 # Root component
-│   └── main.js                 # Application entry point
-├── index.html                  # HTML template
-├── package.json                # Dependencies
-├── vite.config.js              # Vite configuration
-└── jsconfig.json               # JavaScript configuration
+│   ├── helpers/              # Helper functions
+│   │   └── api/              # API helpers
+│   │       ├── api.js        # Base API configuration
+│   │       └── auth/         # Auth-specific API calls
+│   │           └── authApi.js
+│   ├── form_validators/      # Form validation
+│   │   ├── index.js          # Validator exports
+│   │   ├── login_validator.js
+│   │   └── register_validator.js
+│   ├── store/                # State management
+│   │   └── auth.js           # Authentication state
+│   ├── App.vue               # Root component
+│   ├── main.js               # Application entry point
+│   └── router.js             # Vue Router configuration
+├── public/                   # Static assets
+├── index.html                # HTML template
+├── package.json              # Dependencies
+├── vite.config.js            # Vite configuration
+└── README.md                 # Frontend documentation
 ```
 
-### Component Architecture
+### Key Features
 
-#### 1. Form Components
-Reusable form fields with validation:
-
-```vue
-<!-- EmailFormField.vue -->
-<template>
-  <div class="form-group">
-    <label :for="id">{{ label }}</label>
-    <input
-      :id="id"
-      type="email"
-      :value="modelValue"
-      @input="$emit('update:modelValue', $event.target.value)"
-      class="form-control"
-      :class="{ 'is-invalid': error }"
-    />
-    <div v-if="error" class="invalid-feedback">{{ error }}</div>
-  </div>
-</template>
-```
-
-#### 2. Page Components
-Role-based page components:
-
-- **Admin.vue**: Administrator dashboard
-- **Customer.vue**: Customer portal
-- **Engineer.vue**: Engineer interface
-- **Login.vue**: Authentication form
-- **Register.vue**: User registration
-
-#### 3. State Management
-Pinia store for authentication:
+#### 1. Form Validation
+Custom form validation with real-time feedback:
 
 ```javascript
-// store/auth.js
-export const useAuthStore = defineStore('auth', {
-  state: () => ({
-    user: null,
-    token: null,
-    isAuthenticated: false
-  }),
-  actions: {
-    async login(credentials) {
-      // Login logic
+// login_validator.js
+export const loginValidator = {
+    email: {
+        required: true,
+        email: true,
+        message: 'Please enter a valid email address'
     },
-    async register(userData) {
-      // Registration logic
-    },
-    logout() {
-      // Logout logic
+    password: {
+        required: true,
+        minLength: 8,
+        message: 'Password must be at least 8 characters long'
     }
-  }
-})
+}
 ```
 
-### API Integration
+#### 2. API Integration
+Centralized API configuration with authentication:
 
-#### HTTP Client Configuration
 ```javascript
-// helpers/api/api.js
+// api.js
 import axios from 'axios'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
-  timeout: 10000
+    baseURL: 'https://api.baselaragoproject.test',
+    timeout: 10000,
+    headers: {
+        'Content-Type': 'application/json'
+    }
 })
 
 // Request interceptor for authentication
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
 })
+
+export default api
 ```
 
-#### Auth API Module
-```javascript
-// helpers/api/auth/authApi.js
-export const authApi = {
-  login: (credentials) => api.post('/v1/auth/login', credentials),
-  register: (userData) => api.post('/v1/auth/register', userData),
-  getProfile: () => api.get('/v1/auth/profile')
-}
-```
+#### 3. Component Architecture
+Reusable form components with validation:
 
-### Form Validation
-
-#### Validation Schema
-```javascript
-// form_validators/register_validator.js
-import * as yup from 'yup'
-
-export const registerSchema = yup.object({
-  firstName: yup.string().required('First name is required'),
-  lastName: yup.string().required('Last name is required'),
-  email: yup.string().email('Invalid email').required('Email is required'),
-  mobileNumber: yup.string().required('Mobile number is required'),
-  password: yup.string().min(8, 'Password must be at least 8 characters').required('Password is required'),
-  passwordConfirmation: yup.string().oneOf([yup.ref('password')], 'Passwords must match')
-})
-```
-
-#### Component Integration
 ```vue
+<!-- EmailFormField.vue -->
 <template>
-  <Form @submit="onSubmit" :validation-schema="registerSchema">
-    <EmailFormField name="email" label="Email" />
-    <PasswordFormField name="password" label="Password" />
-    <!-- Other fields -->
-  </Form>
+    <div class="form-field">
+        <label :for="id">{{ label }}</label>
+        <input
+            :id="id"
+            type="email"
+            :value="modelValue"
+            @input="$emit('update:modelValue', $event.target.value)"
+            :class="{ 'error': hasError }"
+        />
+        <span v-if="error" class="error-message">{{ error }}</span>
+    </div>
 </template>
+
+<script>
+export default {
+    props: {
+        modelValue: String,
+        label: String,
+        error: String,
+        id: String
+    },
+    emits: ['update:modelValue'],
+    computed: {
+        hasError() {
+            return !!this.error
+        }
+    }
+}
+</script>
 ```
-
-### Styling Architecture
-
-#### SCSS Structure
-- **Component-specific styles**: Scoped to components
-- **Global utilities**: Reusable utility classes
-- **Bootstrap integration**: Custom Bootstrap overrides
-- **Responsive design**: Mobile-first approach
-
-#### Custom Components
-- **Button styles**: Custom button variants
-- **Card components**: Consistent card layouts
-- **Form styling**: Enhanced form appearance
-- **Utility classes**: Helper classes for common patterns
 
 ---
 
 ## Docker Infrastructure
 
-### Overview
-
-The application uses a **microservices architecture** with Docker containers:
-
-- **Reverse Proxy**: Nginx with automatic SSL
-- **API Service**: Go API with hot reloading
-- **Worker Service**: Background job processing
-- **Frontend**: Vue.js development server
-- **Database**: MySQL with persistent storage
-- **Queue**: ElasticMQ (SQS-compatible)
-- **Mail**: MailHog for development
-- **Cache**: Redis for session storage
-- **DNS**: dnsmasq for local domain resolution
-
 ### Container Architecture
+
+The application uses Docker Compose for development with the following services:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Nginx Reverse Proxy                      │
-│              (SSL Termination + Load Balancing)             │
+│                    Docker Compose                           │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
 │  │   Frontend  │  │     API     │  │   Worker    │         │
-│  │   (Vue.js)  │  │   (Gin)     │  │  (Queue)    │         │
+│  │   (Vue.js)  │  │    (Gin)    │  │   (Queue)   │         │
 │  └─────────────┘  └─────────────┘  └─────────────┘         │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │    MySQL    │  │  ElasticMQ  │  │   Redis     │         │
-│  │  (Database) │  │   (Queue)   │  │  (Cache)    │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
+│  │    Nginx    │  │   MySQL     │  │  ElasticMQ  │         │
+│  │ (Reverse    │  │ (Database)  │  │   (Queue)   │         │
+│  │   Proxy)    │  └─────────────┘  └─────────────┘         │
+│  └─────────────┘                                          │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   MailHog   │  │   MinIO     │  │  dnsmasq    │         │
-│  │   (SMTP)    │  │  (S3)       │  │   (DNS)     │         │
+│  │   MailHog   │  │     DNS     │  │     SSL     │         │
+│  │   (SMTP)    │  │  (dnsmasq)  │  │  (Certs)    │         │
 │  └─────────────┘  └─────────────┘  └─────────────┘         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Service Configuration
 
-#### 1. Nginx Reverse Proxy
-```yaml
-nginx:
-  image: nginxproxy/nginx-proxy:alpine
-  ports:
-    - "80:80"
-    - "443:443"
-  volumes:
-    - /var/run/docker.sock:/tmp/docker.sock:ro
-    - ./docker/ssl/certs:/etc/nginx/certs:ro
-```
-
-**Features:**
-- **Automatic SSL**: Self-signed certificates
-- **Service Discovery**: Automatic container detection
-- **Load Balancing**: Multiple backend support
-- **Virtual Hosts**: Domain-based routing
-
-#### 2. API Service
+#### 1. API Service
 ```yaml
 api:
   build:
     context: ./api
-    dockerfile: ../docker/api/Dockerfile
+    dockerfile: docker/api/Dockerfile
   volumes:
-    - ./api:/usr/src/app
+    - ./api:/app
+    - /app/tmp
   environment:
-    - VIRTUAL_HOST=api.baselaragoproject.test
-    - VIRTUAL_PORT=8080
-    - HTTPS_METHOD=static
+    - APP_ENV=development
+    - DB_HOST=db
+    - SQS_ENDPOINT=http://elasticmq:9324
+  depends_on:
+    - db
+    - elasticmq
 ```
 
-**Features:**
-- **Hot Reloading**: Air for development
-- **Multi-stage Build**: Optimized production images
-- **Volume Mounting**: Live code changes
-- **Environment Variables**: Configurable settings
-
-#### 3. Worker Service
+#### 2. Worker Service
 ```yaml
 worker:
   build:
     context: ./api
-    dockerfile: ../docker/worker/Dockerfile
+    dockerfile: docker/worker/Dockerfile
+  volumes:
+    - ./api:/app
   environment:
-    - VIRTUAL_HOST=worker.baselaragoproject.test
-    - VIRTUAL_PORT=8081
-  restart: unless-stopped
+    - APP_ENV=development
+    - DB_HOST=db
+    - SQS_ENDPOINT=http://elasticmq:9324
+  depends_on:
+    - db
+    - elasticmq
 ```
 
-**Features:**
-- **Background Processing**: Queue message handling
-- **Auto-restart**: Automatic recovery
-- **Health Monitoring**: Process monitoring
-- **Graceful Shutdown**: Signal handling
-
-#### 4. Frontend Service
+#### 3. Frontend Service
 ```yaml
-app:
+frontend:
   build:
     context: ./frontend
-    dockerfile: ../docker/frontend/Dockerfile
-  environment:
-    - VIRTUAL_HOST=app.baselaragoproject.test
-    - VIRTUAL_PORT=5173
-    - VIRTUAL_PROTO=https
-```
-
-**Features:**
-- **Vite Dev Server**: Fast development
-- **HTTPS Support**: SSL termination
-- **Hot Module Replacement**: Live updates
-- **Build Optimization**: Production builds
-
-### SSL Configuration
-
-#### Certificate Generation
-```bash
-# Generate self-signed certificates
-./docker/ssl/gen_certs.sh
-
-# Trust certificates on macOS
-./docker/ssl/trust_certs_mac.sh
-```
-
-#### SSL Structure
-```
-docker/ssl/
-├── certs/                      # Certificate files
-│   ├── baselaragoproject.test.crt
-│   ├── baselaragoproject.test.key
-│   └── dhparam.pem
-├── dhparam/                    # Diffie-Hellman parameters
-├── gen_certs.sh               # Certificate generation script
-├── trust_certs_mac.sh         # macOS trust script
-└── vhost.d/                   # Virtual host configurations
-```
-
-### DNS Configuration
-
-#### dnsmasq Setup
-```yaml
-dnsmasq:
-  image: 4km3/dnsmasq:latest
-  ports:
-    - "54:53/udp"
+    dockerfile: docker/frontend/Dockerfile
   volumes:
-    - ./docker/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf
+    - ./frontend:/app
+    - /app/node_modules
+  environment:
+    - VITE_API_URL=https://api.baselaragoproject.test
 ```
 
-#### DNS Configuration
-```conf
-# docker/dnsmasq/dnsmasq.conf
-address=/baselaragoproject.test/127.0.0.1
-listen-address=0.0.0.0
-bind-interfaces
+#### 4. Database Service
+```yaml
+db:
+  image: mysql:8.0
+  environment:
+    MYSQL_ROOT_PASSWORD: root_password
+    MYSQL_DATABASE: dev_base_lara_go
+    MYSQL_USER: api_user
+    MYSQL_PASSWORD: b4s3L4r4G0212!
+  volumes:
+    - mysql_data:/var/lib/mysql
+    - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
 ```
 
-**Features:**
-- **Local Domains**: `.test` domain resolution
-- **Container Discovery**: Automatic service discovery
-- **Port Forwarding**: Local development access
-- **Cross-platform**: Works on macOS, Linux, Windows
-
-### Queue Configuration
-
-#### ElasticMQ Setup
+#### 5. Queue Service
 ```yaml
 elasticmq:
-  image: softwaremill/elasticmq
+  image: softwaremill/elasticmq-native
   ports:
     - "9324:9324"
+    - "9325:9325"
   volumes:
     - ./docker/elasticmq/elasticmq.conf:/opt/elasticmq.conf
 ```
-
-#### Queue Configuration
-```hocon
-# docker/elasticmq/elasticmq.conf
-include classpath("application.conf")
-
-node-address {
-    protocol = http
-    host = "0.0.0.0"
-    port = 9324
-    context-path = ""
-}
-
-rest-sqs {
-    enabled = true
-    bind-port = 9324
-    bind-hostname = "0.0.0.0"
-    sqs-limits = strict
-}
-
-queues {
-    default {
-        defaultVisibilityTimeout = 10 seconds
-        delay = 5 seconds
-        receiveMessageWait = 0 seconds
-        deadLettersQueue {
-            name = "default-dead-letters"
-            maxReceiveCount = 3
-        }
-    }
-}
-```
-
-### Database Configuration
-
-#### MySQL Setup
-```yaml
-db:
-  image: mysql
-  ports:
-    - "3309:3306"
-  volumes:
-    - ./my-db:/var/lib/mysql
-  environment:
-    - MYSQL_ROOT_PASSWORD=D3vB4s3L4r4G0!
-    - MYSQL_DATABASE=dev_base_lara_go
-    - MYSQL_USER=api_user
-    - MYSQL_PASSWORD=b4s3L4r4G0212!
-```
-
-**Features:**
-- **Persistent Storage**: Data persistence across restarts
-- **Port Mapping**: Local development access
-- **Environment Variables**: Configurable credentials
-- **Volume Mounting**: Data directory persistence
-
-### Mail Configuration
-
-#### MailHog Setup
-```yaml
-mailhog:
-  image: jcalonso/mailhog
-  environment:
-    - VIRTUAL_HOST=mail.baselaragoproject.test
-    - VIRTUAL_PORT=8025
-```
-
-**Features:**
-- **SMTP Server**: Development mail server
-- **Web Interface**: Email viewing interface
-- **Message Capture**: All outgoing emails
-- **No External Dependencies**: Self-contained
 
 ### Development Workflow
 
@@ -737,262 +743,150 @@ docker-compose up -d
 docker-compose logs -f api
 
 # Access services
-open https://app.baselaragoproject.test
-open https://api.baselaragoproject.test
-open https://mail.baselaragoproject.test
+# Frontend: https://app.baselaragoproject.test
+# API: https://api.baselaragoproject.test
+# Mail: http://mail.baselaragoproject.test:8025
 ```
 
-#### 2. Code Changes
-- **API**: Automatic reloading with Air
-- **Frontend**: Hot module replacement
-- **Database**: Migration-based schema changes
-- **Configuration**: Environment variable updates
+#### 2. Hot Reloading
+- **Frontend**: Vite provides instant hot reloading
+- **Backend**: Air watches for Go file changes and restarts
+- **Worker**: Automatic restart on code changes
 
-#### 3. Production Deployment
+#### 3. Database Management
 ```bash
-# Build production images
-docker-compose -f docker-compose.prod.yml build
+# Run migrations
+docker-compose exec api go run main.go migrate
 
-# Deploy to production
-docker-compose -f docker-compose.prod.yml up -d
+# Access database
+docker-compose exec db mysql -u api_user -p dev_base_lara_go
 ```
 
-### Security Considerations
+#### 4. Queue Management
+```bash
+# View queue status
+curl http://localhost:9325/queue/jobs
 
-#### 1. SSL/TLS
-- **Self-signed Certificates**: Development only
-- **Certificate Authority**: Production certificates
-- **HTTPS Enforcement**: All traffic encrypted
-- **Certificate Renewal**: Automated renewal process
-
-#### 2. Network Security
-- **Container Isolation**: Network segmentation
-- **Port Exposure**: Minimal port exposure
-- **Service Discovery**: Internal communication
-- **Firewall Rules**: Network-level protection
-
-#### 3. Data Security
-- **Database Encryption**: At-rest encryption
-- **Password Hashing**: Secure password storage
-- **JWT Tokens**: Secure authentication
-- **Environment Variables**: Sensitive data protection
+# Send test message
+aws --endpoint-url http://localhost:9324 sqs send-message \
+  --queue-url http://localhost:9324/queue/jobs \
+  --message-body '{"test": "message"}'
+```
 
 ---
 
 ## Development Workflow
 
-### Prerequisites
+### Code Organization
 
-#### Required Software
-- **Docker Desktop**: Container runtime
-- **Go 1.23+**: Backend development
-- **Node.js 18+**: Frontend development
-- **Git**: Version control
-- **Code Editor**: VS Code recommended
-
-#### System Requirements
-- **macOS**: 10.15+ (Catalina)
-- **Linux**: Ubuntu 20.04+
-- **Windows**: Windows 10+ with WSL2
-- **Memory**: 8GB RAM minimum
-- **Storage**: 10GB free space
-
-### Environment Setup
-
-#### 1. Clone Repository
+#### 1. Service Development
 ```bash
-git clone <repository-url>
-cd base_lara_go_project
+# Create new service
+touch api/app/services/new_service.go
+
+# Create new repository
+touch api/app/repositories/new_repository.go
+
+# Create new facade methods
+# Edit api/app/facades/service.go
+
+# Register in service provider
+# Edit api/app/providers/service_provider.go
 ```
 
-#### 2. Generate SSL Certificates
+#### 2. Event Development
 ```bash
-# Generate certificates
-./docker/ssl/gen_certs.sh
+# Create new event
+touch api/app/events/new_event.go
 
-# Trust certificates (macOS)
-./docker/ssl/trust_certs_mac.sh
+# Create new listener
+touch api/app/listeners/new_listener.go
+
+# Register in event provider
+# Edit api/app/providers/event_service_provider.go
 ```
 
-#### 3. Configure DNS
+#### 3. Job Development
 ```bash
-# Add to /etc/hosts (Linux/macOS)
-echo "127.0.0.1 baselaragoproject.test" | sudo tee -a /etc/hosts
-echo "127.0.0.1 api.baselaragoproject.test" | sudo tee -a /etc/hosts
-echo "127.0.0.1 app.baselaragoproject.test" | sudo tee -a /etc/hosts
-echo "127.0.0.1 mail.baselaragoproject.test" | sudo tee -a /etc/hosts
+# Create new job
+touch api/app/jobs/new_job.go
+
+# Create new processor
+# Edit api/app/providers/job_processor_provider.go
 ```
 
-#### 4. Environment Configuration
-```bash
-# Copy environment template
-cp api/.env.example api/.env
+### Testing Strategy
 
-# Edit environment variables
-nano api/.env
+#### 1. Unit Testing
+```bash
+# Test services
+go test ./api/app/services
+
+# Test repositories
+go test ./api/app/repositories
+
+# Test with coverage
+go test -cover ./api/app/services
 ```
 
-### Development Commands
-
-#### Docker Operations
+#### 2. Integration Testing
 ```bash
-# Start all services
-docker-compose up -d
-
-# Stop all services
-docker-compose down
-
-# Rebuild services
-docker-compose build
-
-# View logs
-docker-compose logs -f [service-name]
-
-# Execute commands in containers
-docker-compose exec api go run main.go
-docker-compose exec app npm run dev
-```
-
-#### API Development
-```bash
-# Run API locally
-cd api
-go run bootstrap/api/main.go
-
-# Run worker locally
-cd api
-go run bootstrap/worker/main.go
-
-# Run tests
-go test ./...
-
-# Run migrations
-go run main.go migrate
-```
-
-#### Frontend Development
-```bash
-# Install dependencies
-cd frontend
-npm install
-
-# Start development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Run tests
-npm test
-```
-
-### Testing
-
-#### API Testing
-```bash
-# Test endpoints
+# Test API endpoints
 curl -X POST https://api.baselaragoproject.test/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"firstName":"John","lastName":"Doe","email":"john@example.com","mobileNumber":"1234567890","password":"password123"}'
+  -d '{"email": "test@example.com", "password": "password123"}'
 
-# Test mail functionality
-curl -X POST https://api.baselaragoproject.test/v1/auth/test-mail
+# Test queue processing
+# Check worker logs for job processing
+docker-compose logs -f worker
 ```
 
-#### Frontend Testing
+#### 3. Frontend Testing
 ```bash
-# Access frontend
-open https://app.baselaragoproject.test
+# Run frontend tests
+cd frontend
+npm run test
 
-# Access mail interface
-open https://mail.baselaragoproject.test
+# Run with coverage
+npm run test:coverage
 ```
 
-### Deployment
+### Deployment Strategy
 
-#### Production Build
-```bash
-# Build production images
-docker-compose -f docker-compose.prod.yml build
+#### 1. Development Environment
+- Docker Compose for local development
+- Hot reloading for rapid iteration
+- Local database and queue services
 
-# Deploy to production
-docker-compose -f docker-compose.prod.yml up -d
-```
+#### 2. Staging Environment
+- Docker containers on staging server
+- Production-like configuration
+- Automated testing and validation
 
-#### Environment Configuration
-```bash
-# Production environment
-cp api/.env.example api/.env.prod
-# Edit production variables
-nano api/.env.prod
-```
+#### 3. Production Environment
+- Container orchestration (Kubernetes/Docker Swarm)
+- Load balancing and auto-scaling
+- Monitoring and logging
+- Database clustering and backup
 
-### Troubleshooting
+### Performance Optimization
 
-#### Common Issues
+#### 1. Backend Optimization
+- Connection pooling for database
+- Caching with Redis
+- Queue batching and optimization
+- Service decorators for cross-cutting concerns
 
-1. **SSL Certificate Errors**
-   ```bash
-   # Regenerate certificates
-   ./docker/ssl/gen_certs.sh
-   ./docker/ssl/trust_certs_mac.sh
-   ```
+#### 2. Frontend Optimization
+- Code splitting and lazy loading
+- Asset optimization and compression
+- CDN for static assets
+- Service worker for caching
 
-2. **DNS Resolution Issues**
-   ```bash
-   # Check dnsmasq
-   docker-compose logs dnsmasq
-   
-   # Test DNS resolution
-   nslookup api.baselaragoproject.test
-   ```
+#### 3. Infrastructure Optimization
+- Load balancing across multiple instances
+- Database read replicas
+- Queue partitioning and scaling
+- CDN for global content delivery
 
-3. **Database Connection Issues**
-   ```bash
-   # Check database logs
-   docker-compose logs db
-   
-   # Test connection
-   docker-compose exec api go run main.go migrate
-   ```
-
-4. **Queue Processing Issues**
-   ```bash
-   # Check worker logs
-   docker-compose logs worker
-   
-   # Check queue status
-   curl http://sqs.baselaragoproject.test:9324
-   ```
-
-#### Performance Optimization
-
-1. **Docker Resource Limits**
-   ```yaml
-   # docker-compose.yaml
-   services:
-     api:
-       deploy:
-         resources:
-           limits:
-             memory: 1G
-             cpus: '0.5'
-   ```
-
----
-
-## Conclusion
-
-This architecture provides a robust, scalable foundation for the Base Laravel Go Project application. The Laravel-inspired patterns in Go, combined with modern frontend technologies and containerized infrastructure, create a development experience that is both powerful and maintainable.
-
-Key benefits of this architecture:
-
-- **Separation of Concerns**: Clear boundaries between layers
-- **Event-Driven Design**: Loose coupling and extensibility
-- **Containerized Deployment**: Consistent environments
-- **Development Experience**: Hot reloading and fast feedback
-- **Scalability**: Microservices architecture
-- **Security**: SSL/TLS and proper authentication
-- **Maintainability**: Well-structured codebase
-
-The documentation provides comprehensive guidance for development, deployment, and maintenance of the application.
+This architecture provides a solid foundation for building scalable, maintainable applications with Laravel-style patterns in Go, while maintaining excellent performance and developer productivity.

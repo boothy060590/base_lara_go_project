@@ -17,6 +17,7 @@ func main() {
 	// register service providers
 	providers.RegisterFormFieldValidators()
 	providers.RegisterDatabase()
+	providers.RegisterCache()
 	providers.RegisterMailer()
 	providers.RegisterQueue()
 	providers.RegisterJobDispatcher()
@@ -41,6 +42,7 @@ func main() {
 	// Set up facades with concrete implementations
 	facades.SetEventDispatcher(core.EventDispatcherServiceInstance)
 	facades.SetJobDispatcher(core.JobDispatcherServiceInstance)
+	facades.SetCache(core.CacheInstance)
 
 	// Register event listeners
 	providers.RegisterListeners()

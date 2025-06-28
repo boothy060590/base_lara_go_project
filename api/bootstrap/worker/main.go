@@ -9,17 +9,22 @@ import (
 )
 
 func main() {
-	// register config first
+	log.Println("Starting worker...")
+
+	// Register config first
 	providers.RegisterConfig()
 
-	// register service providers
+	// Register all service providers
 	providers.RegisterFormFieldValidators()
 	providers.RegisterDatabase()
+	providers.RegisterCache()
 	providers.RegisterMailer()
 	providers.RegisterQueue()
 	providers.RegisterJobDispatcher()
 	providers.RegisterMessageProcessor()
 	providers.RegisterEventDispatcher()
+	providers.RegisterRepository()
+	providers.RegisterServices() // Register service provider
 
 	// Initialize core systems
 	core.InitializeRegistry()
@@ -39,6 +44,7 @@ func main() {
 	// Set up facades with concrete implementations
 	facades.SetEventDispatcher(core.EventDispatcherServiceInstance)
 	facades.SetJobDispatcher(core.JobDispatcherServiceInstance)
+	facades.SetCache(core.CacheInstance)
 
 	// Register event listeners
 	providers.RegisterListeners()
@@ -47,6 +53,8 @@ func main() {
 	providers.RegisterJobProcessors()
 
 	providers.RunMigrations()
+
+	log.Println("All service providers registered successfully")
 
 	// Start a worker for all enabled queues
 	queueConfig := config.QueueConfig()

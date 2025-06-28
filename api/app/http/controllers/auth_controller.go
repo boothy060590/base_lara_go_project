@@ -6,10 +6,10 @@ import (
 	authEvents "base_lara_go_project/app/events/auth"
 	"base_lara_go_project/app/facades"
 	"base_lara_go_project/app/http/requests"
-	authJobs "base_lara_go_project/app/jobs/auth"
-	"base_lara_go_project/app/models"
 	"base_lara_go_project/app/utils/token"
 	"net/http"
+
+	db "base_lara_go_project/app/models/db"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,22 +23,20 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Create and dispatch the job synchronously (like $user = dispatchSync(new CreateUserJob(...)))
-	createUserJob := &authJobs.CreateUserJob{
-		Password:  input.Password,
-		FirstName: input.FirstName,
-		LastName:  input.LastName,
-		Email:     input.Email,
-		Roles:     []string{"customer"},
+	// Direct service call - no job needed for sync operations
+	userData := map[string]interface{}{
+		"first_name":    input.FirstName,
+		"last_name":     input.LastName,
+		"email":         input.Email,
+		"password":      input.Password,
+		"mobile_number": input.MobileNumber,
 	}
 
-	result, err := facades.DispatchSync(createUserJob)
+	user, err := facades.CreateUser(userData, []string{"customer"})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	user := result.(*models.User)
 
 	// Convert to DTO using the static method
 	userDTO := auth.FromUser(user)
@@ -47,7 +45,7 @@ func Register(c *gin.Context) {
 	userCreatedEvent := &authEvents.UserCreated{User: userDTO}
 	facades.EventAsync(userCreatedEvent)
 
-	c.JSON(http.StatusOK, gin.H{"message": user.Email + " successfully registered", "roles": user.Roles})
+	c.JSON(http.StatusOK, gin.H{"message": user.GetEmail() + " successfully registered", "roles": user.GetRoles()})
 }
 
 func Login(c *gin.Context) {
@@ -58,20 +56,21 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Create and dispatch the login job synchronously
-	loginJob := &authJobs.LoginUserJob{
-		Username: input.Email, // Assuming email is used as username
-		Password: input.Password,
-	}
-
-	result, err := facades.DispatchSync(loginJob)
+	// Direct service call
+	user, err := facades.AuthenticateUser(input.Email, input.Password)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "email or password is incorrect."})
 		return
 	}
 
-	loginResult := result.(*authJobs.LoginResult)
-	c.JSON(http.StatusOK, gin.H{"token": loginResult.Token, "role": loginResult.Role})
+	// Generate token
+	token, err := token.GenerateToken(user.GetID(), user.GetRoles()[0].GetName())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"token": token, "role": user.GetRoles()[0].GetName()})
 }
 
 func CurrentUser(c *gin.Context) {
@@ -83,18 +82,13 @@ func CurrentUser(c *gin.Context) {
 		return
 	}
 
-	// Create and dispatch the get logged in user job synchronously
-	getUserJob := &authJobs.GetLoggedInUserJob{
-		UserID: userId,
-	}
-
-	result, err := facades.DispatchSync(getUserJob)
+	// Direct service call
+	user, err := facades.GetUserWithRoles(userId)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	user := result.(*models.User)
 	userDTO := auth.FromUser(user)
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": userDTO})
 }
@@ -102,7 +96,7 @@ func CurrentUser(c *gin.Context) {
 // TestEmailTemplate demonstrates the new email templating system
 func TestEmailTemplate(c *gin.Context) {
 	// Create a test user
-	testUser := &models.User{
+	testUser := &db.User{
 		FirstName:    "John",
 		LastName:     "Doe",
 		Email:        "john.doe@example.com",

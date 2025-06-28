@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"base_lara_go_project/app/core"
+	"base_lara_go_project/app/models/db"
 	"base_lara_go_project/config"
 	"base_lara_go_project/database/migrations"
 
@@ -45,6 +46,9 @@ func RegisterDatabase() {
 
 	// Set up the global database instance with our provider
 	core.DatabaseInstance = core.NewDatabaseProvider(DB)
+
+	// Register cacheable models for automatic cache invalidation
+	core.RegisterCacheableModel(DB, &db.User{})
 }
 
 func RunMigrations() {

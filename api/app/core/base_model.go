@@ -2,33 +2,71 @@ package core
 
 import (
 	"strings"
+	"time"
+
+	"gorm.io/gorm"
 )
 
-// BaseModel provides Laravel Eloquent-style magic getters and setters
+// BaseModel provides common functionality for all models
 type BaseModel struct {
-	attributes map[string]interface{}
+	gorm.Model
+	BaseModelData
+}
+
+// BaseModelData holds the base model data structure
+type BaseModelData struct {
+	data map[string]interface{}
 }
 
 // NewBaseModel creates a new base model
-func NewBaseModel() *BaseModel {
-	return &BaseModel{
-		attributes: make(map[string]interface{}),
+func NewBaseModel() *BaseModelData {
+	return &BaseModelData{
+		data: make(map[string]interface{}),
 	}
 }
 
-// Get retrieves a value by key (magic getter)
-func (m *BaseModel) Get(key string) interface{} {
-	return m.attributes[key]
+// Set sets a value in the base model
+func (b *BaseModelData) Set(key string, value interface{}) {
+	b.data[key] = value
 }
 
-// Set sets a value by key (magic setter)
-func (m *BaseModel) Set(key string, value interface{}) {
-	m.attributes[key] = value
+// Get gets a value from the base model
+func (b *BaseModelData) Get(key string) interface{} {
+	return b.data[key]
+}
+
+// Has checks if a key exists in the base model
+func (b *BaseModelData) Has(key string) bool {
+	_, exists := b.data[key]
+	return exists
+}
+
+// GetData returns all data from the base model
+func (b *BaseModelData) GetData() map[string]interface{} {
+	return b.data
+}
+
+// ModelInterface defines the interface for all models
+type ModelInterface interface {
+	GetID() uint
+	GetTableName() string
+	GetCreatedAt() time.Time
+	GetUpdatedAt() time.Time
+	GetDeletedAt() *time.Time
+}
+
+// BaseModelInterface extends ModelInterface with base functionality
+type BaseModelInterface interface {
+	ModelInterface
+	Set(key string, value interface{})
+	Get(key string) interface{}
+	Has(key string) bool
+	GetData() map[string]interface{}
 }
 
 // GetString retrieves a string value by key
-func (m *BaseModel) GetString(key string) string {
-	if val, ok := m.attributes[key]; ok {
+func (b *BaseModelData) GetString(key string) string {
+	if val, ok := b.data[key]; ok {
 		if str, ok := val.(string); ok {
 			return str
 		}
@@ -37,8 +75,8 @@ func (m *BaseModel) GetString(key string) string {
 }
 
 // GetUint retrieves a uint value by key
-func (m *BaseModel) GetUint(key string) uint {
-	if val, ok := m.attributes[key]; ok {
+func (b *BaseModelData) GetUint(key string) uint {
+	if val, ok := b.data[key]; ok {
 		if u, ok := val.(uint); ok {
 			return u
 		}
@@ -54,8 +92,8 @@ func (m *BaseModel) GetUint(key string) uint {
 }
 
 // GetBool retrieves a bool value by key
-func (m *BaseModel) GetBool(key string) bool {
-	if val, ok := m.attributes[key]; ok {
+func (b *BaseModelData) GetBool(key string) bool {
+	if val, ok := b.data[key]; ok {
 		if b, ok := val.(bool); ok {
 			return b
 		}
@@ -64,28 +102,28 @@ func (m *BaseModel) GetBool(key string) bool {
 }
 
 // Fill fills the model with data from a map
-func (m *BaseModel) Fill(data map[string]interface{}) {
+func (b *BaseModelData) Fill(data map[string]interface{}) {
 	for key, value := range data {
-		m.Set(key, value)
+		b.Set(key, value)
 	}
 }
 
 // ToMap converts the model to a map
-func (m *BaseModel) ToMap() map[string]interface{} {
-	return m.attributes
+func (b *BaseModelData) ToMap() map[string]interface{} {
+	return b.data
 }
 
 // Magic getter/setter using reflection for struct fields
-func (m *BaseModel) GetField(fieldName string) interface{} {
+func (b *BaseModelData) GetField(fieldName string) interface{} {
 	// Convert field name to snake_case for database columns
 	dbField := toSnakeCase(fieldName)
-	return m.Get(dbField)
+	return b.Get(dbField)
 }
 
-func (m *BaseModel) SetField(fieldName string, value interface{}) {
+func (b *BaseModelData) SetField(fieldName string, value interface{}) {
 	// Convert field name to snake_case for database columns
 	dbField := toSnakeCase(fieldName)
-	m.Set(dbField, value)
+	b.Set(dbField, value)
 }
 
 // Helper function to convert camelCase to snake_case
@@ -101,35 +139,35 @@ func toSnakeCase(s string) string {
 }
 
 // Magic getter for common fields
-func (m *BaseModel) GetID() uint {
-	return m.GetUint("id")
+func (b *BaseModelData) GetID() uint {
+	return b.GetUint("id")
 }
 
-func (m *BaseModel) GetEmail() string {
-	return m.GetString("email")
+func (b *BaseModelData) GetEmail() string {
+	return b.GetString("email")
 }
 
-func (m *BaseModel) GetFirstName() string {
-	return m.GetString("first_name")
+func (b *BaseModelData) GetFirstName() string {
+	return b.GetString("first_name")
 }
 
-func (m *BaseModel) GetLastName() string {
-	return m.GetString("last_name")
+func (b *BaseModelData) GetLastName() string {
+	return b.GetString("last_name")
 }
 
 // Dynamic field access using reflection
-func (m *BaseModel) GetAttribute(name string) interface{} {
-	return m.Get(name)
+func (b *BaseModelData) GetAttribute(name string) interface{} {
+	return b.Get(name)
 }
 
-func (m *BaseModel) SetAttribute(name string, value interface{}) {
-	m.Set(name, value)
+func (b *BaseModelData) SetAttribute(name string, value interface{}) {
+	b.Set(name, value)
 }
 
 // Laravel-style accessors
-func (m *BaseModel) GetFullName() string {
-	firstName := m.GetFirstName()
-	lastName := m.GetLastName()
+func (b *BaseModelData) GetFullName() string {
+	firstName := b.GetFirstName()
+	lastName := b.GetLastName()
 	if firstName != "" && lastName != "" {
 		return firstName + " " + lastName
 	}

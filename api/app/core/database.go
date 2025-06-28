@@ -35,6 +35,9 @@ type DatabaseInterface interface {
 
 	// Migration support
 	Migrate() error
+
+	// Get underlying GORM DB instance
+	GetDB() *gorm.DB
 }
 
 // DatabaseProvider implements the core DatabaseInterface
@@ -126,6 +129,11 @@ func (d *DatabaseProvider) Migrate() error {
 	// This would be implemented to run migrations
 	// For now, we'll return nil as migrations are handled separately
 	return nil
+}
+
+// GetDB returns the underlying GORM DB instance
+func (d *DatabaseProvider) GetDB() *gorm.DB {
+	return d.db
 }
 
 // DatabaseProvider interface for database configuration

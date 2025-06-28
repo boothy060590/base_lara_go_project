@@ -2,7 +2,7 @@ package auth
 
 import (
 	"base_lara_go_project/app/core"
-	"base_lara_go_project/app/models"
+	"base_lara_go_project/app/models/interfaces"
 )
 
 type UserDTO struct {
@@ -19,26 +19,26 @@ func (u UserDTO) GetID() uint { return u.ID }
 
 // FromModel implements BaseDTO interface
 func (u UserDTO) FromModel(model interface{}) core.BaseDTO {
-	if user, ok := model.(*models.User); ok {
+	if user, ok := model.(interfaces.UserInterface); ok {
 		return FromUser(user)
 	}
 	return u
 }
 
-// FromUser creates a UserDTO from a User model (Laravel-style static method)
-func FromUser(user *models.User) UserDTO {
+// FromUser creates a UserDTO from a UserInterface
+func FromUser(user interfaces.UserInterface) UserDTO {
 	roles := []string{}
-	for _, r := range user.Roles {
-		roles = append(roles, r.Name)
+	for _, r := range user.GetRoles() {
+		roles = append(roles, r.GetName())
 	}
 
 	return UserDTO{
-		ID:            user.ID,
-		FirstName:     user.FirstName,
-		LastName:      user.LastName,
-		Email:         user.Email,
-		MobileNumber:  user.MobileNumber,
-		ResetPassword: user.ResetPassword,
+		ID:            user.GetID(),
+		FirstName:     user.GetFirstName(),
+		LastName:      user.GetLastName(),
+		Email:         user.GetEmail(),
+		MobileNumber:  user.GetMobileNumber(),
+		ResetPassword: user.GetResetPassword(),
 		Roles:         roles,
 	}
 }
