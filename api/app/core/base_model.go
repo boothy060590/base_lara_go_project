@@ -115,6 +115,15 @@ func (b *BaseModelData) Fill(data map[string]interface{}) {
 	}
 }
 
+// FillFields fills specific struct fields using a mapping pattern (Laravel-style)
+func (b *BaseModelData) FillFields(data map[string]interface{}, fieldMappings map[string]func(interface{})) {
+	for key, setter := range fieldMappings {
+		if value, exists := data[key]; exists {
+			setter(value)
+		}
+	}
+}
+
 // ToMap converts the model to a map
 func (b *BaseModelData) ToMap() map[string]interface{} {
 	return b.data

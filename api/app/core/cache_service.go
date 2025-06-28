@@ -76,6 +76,35 @@ func (s *CacheService) GetCachedModel(cacheKey string, modelType interface{}) (i
 	return modelType, true
 }
 
+// GetCachedModelByID retrieves a cached model by ID using the base key
+func (s *CacheService) GetCachedModelByID(baseKey string, id uint, model CacheModelInterface) (bool, error) {
+	cacheKey := fmt.Sprintf("%s:%d:data", baseKey, id)
+
+	data, exists := CacheInstance.Get(cacheKey)
+	if !exists {
+		return false, nil
+	}
+
+	// Deserialize from JSON
+	var cacheData map[string]interface{}
+	if jsonStr, ok := data.(string); ok {
+		err := json.Unmarshal([]byte(jsonStr), &cacheData)
+		if err != nil {
+			return false, err
+		}
+
+		// Populate model from cache data
+		err = model.FromCacheData(cacheData)
+		if err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}
+
+	return false, fmt.Errorf("cached data is not a string")
+}
+
 // ForgetModel removes a cached model
 func (s *CacheService) ForgetModel(model Cacheable) error {
 	cacheKey := model.GetCacheKey()
@@ -155,4 +184,9 @@ func ForgetByKey(key string) error {
 // ForgetByTag removes cached items by tag
 func ForgetByTag(tag string) error {
 	return CacheServiceInstance.ForgetByTag(tag)
+}
+
+// GetCachedModelByID retrieves a cached model by ID using the base key
+func GetCachedModelByID(baseKey string, id uint, model CacheModelInterface) (bool, error) {
+	return CacheServiceInstance.GetCachedModelByID(baseKey, id, model)
 }

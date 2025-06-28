@@ -3,10 +3,12 @@ package cache
 import (
 	"base_lara_go_project/app/core"
 	"base_lara_go_project/app/models/interfaces"
+	"fmt"
+	"time"
 )
 
 type User struct {
-	core.CachedModel
+	core.BaseModelData
 	FirstName     string `json:"first_name"`
 	LastName      string `json:"last_name"`
 	Email         string `json:"email"`
@@ -24,9 +26,135 @@ func (u *User) GetTableName() string {
 	return "users"
 }
 
+// GetBaseKey returns the base key for this model type
+func (u *User) GetBaseKey() string {
+	return "users"
+}
+
 // GetID returns the user ID
 func (u *User) GetID() uint {
 	return u.GetUint("id")
+}
+
+// GetCacheKey returns the cache key for this model
+func (u *User) GetCacheKey() string {
+	id := u.GetID()
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:data", u.GetTableName(), id)
+}
+
+// GetCacheTTL returns the TTL for this model's cache
+func (u *User) GetCacheTTL() time.Duration {
+	return time.Hour
+}
+
+// GetCacheData returns the data to be cached
+func (u *User) GetCacheData() interface{} {
+	// Get base model data
+	baseData := u.GetData()
+
+	// Add struct fields to the cache data
+	cacheData := map[string]interface{}{
+		"first_name":     u.FirstName,
+		"last_name":      u.LastName,
+		"email":          u.Email,
+		"password":       u.Password,
+		"reset_password": u.ResetPassword,
+		"mobile_number":  u.MobileNumber,
+		"roles":          u.Roles,
+	}
+
+	// Merge base data with struct data
+	for key, value := range baseData {
+		cacheData[key] = value
+	}
+
+	return cacheData
+}
+
+// GetCacheTags returns cache tags for invalidation
+func (u *User) GetCacheTags() []string {
+	return []string{
+		u.GetTableName(),
+		fmt.Sprintf("%s:%d", u.GetTableName(), u.GetID()),
+	}
+}
+
+// FromCacheData populates the model from cached data
+func (u *User) FromCacheData(data map[string]interface{}) error {
+	// Initialize the data map if it's nil
+	u.Initialize()
+
+	// Fill the model with cached data
+	u.Fill(data)
+
+	// Populate struct fields from the data map using reflection
+	u.populateStructFields(data)
+
+	return nil
+}
+
+// populateStructFields populates the struct fields from the data map
+func (u *User) populateStructFields(data map[string]interface{}) {
+	// Define field mappings for cleaner assignment (Laravel-style)
+	fieldMappings := map[string]func(interface{}){
+		"first_name": func(value interface{}) {
+			if str, ok := value.(string); ok {
+				u.FirstName = str
+			}
+		},
+		"last_name": func(value interface{}) {
+			if str, ok := value.(string); ok {
+				u.LastName = str
+			}
+		},
+		"email": func(value interface{}) {
+			if str, ok := value.(string); ok {
+				u.Email = str
+			}
+		},
+		"password": func(value interface{}) {
+			if str, ok := value.(string); ok {
+				u.Password = str
+			}
+		},
+		"mobile_number": func(value interface{}) {
+			if str, ok := value.(string); ok {
+				u.MobileNumber = str
+			}
+		},
+		"reset_password": func(value interface{}) {
+			if b, ok := value.(bool); ok {
+				u.ResetPassword = b
+			}
+		},
+	}
+
+	// Apply field mappings using the helper method
+	u.FillFields(data, fieldMappings)
+
+	// Handle roles separately since it's more complex
+	if rolesData, ok := data["roles"].([]interface{}); ok {
+		u.Roles = make([]Role, 0, len(rolesData))
+		for _, roleData := range rolesData {
+			if roleMap, ok := roleData.(map[string]interface{}); ok {
+				role := &Role{}
+				role.Initialize()
+				role.Fill(roleMap)
+
+				if name, ok := roleMap["name"].(string); ok {
+					role.Name = name
+				}
+				if description, ok := roleMap["description"].(string); ok {
+					role.Description = description
+				}
+
+				u.Roles = append(u.Roles, *role)
+			}
+		}
+	}
 }
 
 // GetFullName returns the user's full name
@@ -175,4 +303,28 @@ func (user *User) GetMobileNumber() string {
 // GetResetPassword returns the user's reset password flag
 func (user *User) GetResetPassword() bool {
 	return user.ResetPassword
+}
+
+// GetCreatedAt returns the created at time
+func (u *User) GetCreatedAt() time.Time {
+	if createdAt, ok := u.Get("created_at").(time.Time); ok {
+		return createdAt
+	}
+	return time.Time{}
+}
+
+// GetUpdatedAt returns the updated at time
+func (u *User) GetUpdatedAt() time.Time {
+	if updatedAt, ok := u.Get("updated_at").(time.Time); ok {
+		return updatedAt
+	}
+	return time.Time{}
+}
+
+// GetDeletedAt returns the deleted at time
+func (u *User) GetDeletedAt() *time.Time {
+	if deletedAt, ok := u.Get("deleted_at").(*time.Time); ok {
+		return deletedAt
+	}
+	return nil
 }

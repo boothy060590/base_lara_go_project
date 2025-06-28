@@ -58,6 +58,12 @@ func GetCacheConfig() CacheConfig {
 		}
 	}
 
+	// Handle Redis password - treat "null" as empty string
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	if redisPassword == "null" {
+		redisPassword = ""
+	}
+
 	return CacheConfig{
 		Store:  getEnv("CACHE_STORE", "array"),
 		Prefix: getEnv("CACHE_PREFIX", "base_lara_go_cache_"),
@@ -65,7 +71,7 @@ func GetCacheConfig() CacheConfig {
 		Redis: RedisConfig{
 			Host:     getEnv("REDIS_HOST", "redis"),
 			Port:     redisPort,
-			Password: getEnv("REDIS_PASSWORD", ""),
+			Password: redisPassword,
 			Database: redisDB,
 		},
 		File: FileConfig{

@@ -21,6 +21,7 @@ func NewCachedModel() *CachedModel {
 // CacheModelInterface defines the interface for cacheable models
 type CacheModelInterface interface {
 	BaseModelInterface
+	GetBaseKey() string
 	GetCacheKey() string
 	GetCacheTTL() time.Duration
 	GetCacheData() interface{}
@@ -28,13 +29,21 @@ type CacheModelInterface interface {
 	FromCacheData(data map[string]interface{}) error
 }
 
+// GetBaseKey returns the base key for this model type (e.g., "users", "categories")
+func (c *CachedModel) GetBaseKey() string {
+	// This should be overridden by the embedding struct
+	// Return empty string as default to indicate it needs to be implemented
+	return ""
+}
+
 // GetCacheKey returns the cache key for this model
 func (c *CachedModel) GetCacheKey() string {
+	baseKey := c.GetBaseKey()
 	id := c.GetID()
-	if id == 0 {
+	if baseKey == "" || id == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d:data", c.GetTableName(), id)
+	return fmt.Sprintf("%s:%d:data", baseKey, id)
 }
 
 // GetCacheTTL returns the TTL for this model's cache
@@ -61,8 +70,10 @@ func (c *CachedModel) FromCacheData(data map[string]interface{}) error {
 	return nil
 }
 
-// GetTableName returns the table name (should be overridden)
+// GetTableName returns the table name (must be implemented by embedding struct)
 func (c *CachedModel) GetTableName() string {
+	// This should be overridden by the embedding struct
+	// Return empty string as default to indicate it needs to be implemented
 	return ""
 }
 

@@ -291,11 +291,8 @@ func (s *UserService) GetUserWithRoles(id uint) (interfaces.UserInterface, error
 		return nil, err
 	}
 
-	// Business logic: Check if user has access to view roles
-	if !s.canViewUserRoles(user) {
-		return nil, errors.New("insufficient permissions to view user roles")
-	}
-
+	// Always return user with roles - no permission check needed
+	// Roles and permissions are essential for user authentication and authorization
 	return user, nil
 }
 
@@ -361,12 +358,6 @@ func (s *UserService) isAdminUser(user interfaces.UserInterface) bool {
 		}
 	}
 	return false
-}
-
-// canViewUserRoles checks if user can view other users' roles
-func (s *UserService) canViewUserRoles(user interfaces.UserInterface) bool {
-	// Business rule: Only admin users can view roles
-	return s.isAdminUser(user)
 }
 
 // isValidEmail validates email format

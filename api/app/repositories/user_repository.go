@@ -34,19 +34,15 @@ func (r *UserRepository) GetDB() *gorm.DB {
 // FindByID finds a user by ID, trying cache first then database
 func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
 	// Try to get from cache first
-	cacheKey := fmt.Sprintf("users:%d:data", id)
-
-	if cachedData, exists := r.cache.Get(cacheKey); exists {
-		// Deserialize from cache
-		user := &cache.User{}
-		if err := user.FromCacheData(cachedData.(map[string]interface{})); err == nil {
-			return user, nil
-		}
+	user := &cache.User{}
+	found, err := core.GetCachedModelByID("users", id, user)
+	if err == nil && found {
+		return user, nil
 	}
 
-	// If not in cache or deserialization failed, get from database
+	// If not in cache or retrieval failed, get from database
 	dbUser := &db.User{}
-	err := r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+	err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -358,20 +354,23 @@ func (r *UserRepository) convertDBToCache(dbUser *db.User) *cache.User {
 
 // storeInCache stores a user in cache
 func (r *UserRepository) storeInCache(user *cache.User) {
-	cacheKey := user.GetCacheKey()
-	if cacheKey != "" {
-		r.cache.Set(cacheKey, user.GetCacheData(), user.GetCacheTTL())
-
-		// Store email index
-		emailCacheKey := fmt.Sprintf("users:email:%s", user.Email)
-		r.cache.Set(emailCacheKey, user.GetID(), time.Hour)
+	// Use the cache service to properly serialize and store the model
+	err := core.CacheModel(user)
+	if err != nil {
+		// Log error but don't fail the operation
+		return
 	}
+
+	// Store email index
+	emailCacheKey := fmt.Sprintf("users:email:%s", user.Email)
+	r.cache.Set(emailCacheKey, user.GetID(), time.Hour)
 }
 
 // removeFromCache removes a user from cache
 func (r *UserRepository) removeFromCache(id uint) {
-	cacheKey := fmt.Sprintf("users:%d:data", id)
-	r.cache.Delete(cacheKey)
+	user := &cache.User{}
+	user.Set("id", id)
+	core.ForgetModel(user)
 
 	// Also remove any email indexes (we'd need to get the email first, but for simplicity we'll just let them expire)
 }
