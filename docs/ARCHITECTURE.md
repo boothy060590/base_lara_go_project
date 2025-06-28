@@ -8,6 +8,7 @@
 4. [Frontend Implementation](#frontend-implementation)
 5. [Docker Infrastructure](#docker-infrastructure)
 6. [Development Workflow](#development-workflow)
+7. [Caching Architecture](#caching-architecture)
 
 ---
 
@@ -275,6 +276,303 @@ cachingDecorator := core.NewCachingDecorator(userService, cache, 30*time.Minute)
 user, err := loggingDecorator.CreateUser(data)
 user, err := cachingDecorator.AuthenticateUser(email, password)
 ```
+
+---
+
+## Caching Architecture
+
+### Overview
+
+The caching system implements a Laravel-inspired architecture with automatic serialization, base key management, and clean separation of concerns. It provides high-performance data access with automatic cache management and type-safe field mapping.
+
+### Cache Architecture Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cache Service Layer                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │   Cache     │  │   Cache     │  │   Cache     │         │
+│  │  Service    │  │   Model     │  │ Repository  │         │
+│  │ (Helpers)   │  │ (Interface) │  │ (Integration)│         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+├─────────────────────────────────────────────────────────────┤
+│                    Cache Storage Layer                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │    Redis    │  │    File     │  │   Array     │         │
+│  │   (Primary) │  │   Cache     │  │   Cache     │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Core Cache Components
+
+#### 1. Cache Model Interface
+Base interface for all cacheable models:
+
+```go
+type CacheModelInterface interface {
+    BaseModelInterface
+    GetBaseKey() string           // e.g., "users", "categories"
+    GetCacheKey() string          // e.g., "users:1:data"
+    GetCacheTTL() time.Duration   // Cache expiration time
+    GetCacheData() interface{}    // Data to be cached
+    GetCacheTags() []string       // Cache invalidation tags
+    FromCacheData(data map[string]interface{}) error
+}
+```
+
+#### 2. Cache Service
+Provides helper methods for cache operations:
+
+```go
+// Automatic serialization/deserialization
+func CacheModel(model Cacheable) error
+func GetCachedModelByID(baseKey string, id uint, model CacheModelInterface) (bool, error)
+
+// Cache management
+func ForgetModel(model Cacheable) error
+func ForgetByKey(key string) error
+func ForgetByTag(tag string) error
+```
+
+#### 3. Laravel-Style Field Mapping
+Clean field population without nested if statements:
+
+```go
+// Define field mappings (Laravel-style)
+fieldMappings := map[string]func(interface{}) {
+    "first_name": func(value interface{}) {
+        if str, ok := value.(string); ok {
+            u.FirstName = str
+        }
+    },
+    "email": func(value interface{}) {
+        if str, ok := value.(string); ok {
+            u.Email = str
+        }
+    },
+    // ... more fields
+}
+
+// Apply mappings using helper
+u.FillFields(data, fieldMappings)
+```
+
+### Cache Implementation Examples
+
+#### Cache Model Implementation
+```go
+type User struct {
+    core.BaseModelData
+    FirstName     string `json:"first_name"`
+    LastName      string `json:"last_name"`
+    Email         string `json:"email"`
+    Password      string `json:"password"`
+    MobileNumber  string `json:"mobile_number"`
+    Roles         []Role `json:"roles"`
+}
+
+// Required interface methods
+func (u *User) GetBaseKey() string {
+    return "users"
+}
+
+func (u *User) GetCacheKey() string {
+    return fmt.Sprintf("%s:%d:data", u.GetBaseKey(), u.GetID())
+}
+
+func (u *User) GetCacheTTL() time.Duration {
+    return time.Hour
+}
+
+func (u *User) GetCacheData() interface{} {
+    return u.GetData()
+}
+
+// Laravel-style field mapping
+func (u *User) FromCacheData(data map[string]interface{}) error {
+    u.Initialize()
+    u.Fill(data)
+    u.populateStructFields(data)
+    return nil
+}
+
+func (u *User) populateStructFields(data map[string]interface{}) {
+    fieldMappings := map[string]func(interface{}) {
+        "first_name": func(value interface{}) {
+            if str, ok := value.(string); ok {
+                u.FirstName = str
+            }
+        },
+        // ... more fields
+    }
+    u.FillFields(data, fieldMappings)
+}
+```
+
+#### Repository Integration
+```go
+func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
+    // Try cache first using helper
+    user := &cache.User{}
+    found, err := core.GetCachedModelByID("users", id, user)
+    if err == nil && found {
+        return user, nil
+    }
+
+    // Get from database with relationships
+    dbUser := &db.User{}
+    err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+
+    // Convert and cache automatically
+    cacheUser := r.convertDBToCache(dbUser)
+    r.storeInCache(cacheUser)
+
+    return cacheUser, nil
+}
+
+func (r *UserRepository) storeInCache(user *cache.User) {
+    // Automatic serialization and storage
+    err := core.CacheModel(user)
+    if err != nil {
+        return
+    }
+
+    // Store email index for lookups
+    emailCacheKey := fmt.Sprintf("users:email:%s", user.Email)
+    r.cache.Set(emailCacheKey, user.GetID(), time.Hour)
+}
+```
+
+### Cache Key Strategy
+
+#### Automatic Key Generation
+- **Base Key**: Model type identifier (e.g., "users", "categories")
+- **Data Key**: `{base_key}:{id}:data` (e.g., "users:1:data")
+- **Index Keys**: `{base_key}:{field}:{value}` (e.g., "users:email:user@example.com")
+
+#### Cache Tags for Invalidation
+```go
+func (u *User) GetCacheTags() []string {
+    return []string{
+        u.GetTableName(),                    // "users"
+        fmt.Sprintf("%s:%d", u.GetTableName(), u.GetID()), // "users:1"
+    }
+}
+```
+
+### Performance Benefits
+
+#### 1. Automatic Cache Management
+- **Serialization**: Automatic JSON serialization/deserialization
+- **Key Generation**: Consistent key patterns across models
+- **TTL Management**: Automatic expiration handling
+- **Index Management**: Email-based lookups for fast retrieval
+
+#### 2. Type Safety
+- **Field Mapping**: Type-safe field population
+- **Interface Compliance**: Compile-time interface checking
+- **Error Handling**: Proper error propagation
+
+#### 3. Laravel-Style Patterns
+- **Clean Code**: No nested if statements
+- **Reusable Helpers**: Consistent patterns across models
+- **Maintainable**: Easy to extend and modify
+
+### Cache Configuration
+
+#### Redis Configuration
+```go
+// config/cache.go
+type CacheConfig struct {
+    Driver   string `env:"CACHE_DRIVER" envDefault:"redis"`
+    Host     string `env:"CACHE_HOST" envDefault:"redis"`
+    Port     int    `env:"CACHE_PORT" envDefault:"6379"`
+    Password string `env:"CACHE_PASSWORD" envDefault:""`
+    Database int    `env:"CACHE_DATABASE" envDefault:"0"`
+    Prefix   string `env:"CACHE_PREFIX" envDefault:"base_lara_go_cache_"`
+}
+```
+
+#### Cache Driver Selection
+```go
+func NewCache(config CacheConfig) (CacheInterface, error) {
+    switch config.Driver {
+    case "redis":
+        return redis.NewRedisCache(config)
+    case "file":
+        return file.NewFileCache(config)
+    case "array":
+        return array.NewArrayCache()
+    default:
+        return redis.NewRedisCache(config)
+    }
+}
+```
+
+### Best Practices
+
+#### 1. Always Load Relationships
+```go
+// ✅ GOOD: Always load roles and permissions
+err := r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+
+// ❌ BAD: Missing relationships
+err := r.db.First(dbUser, id).Error
+```
+
+#### 2. Use Cache Helpers
+```go
+// ✅ GOOD: Use helper methods
+found, err := core.GetCachedModelByID("users", id, user)
+
+// ❌ BAD: Manual cache handling
+cacheKey := fmt.Sprintf("users:%d:data", id)
+if cachedData, exists := r.cache.Get(cacheKey); exists {
+    // Manual deserialization...
+}
+```
+
+#### 3. Implement Field Mapping
+```go
+// ✅ GOOD: Laravel-style field mapping
+fieldMappings := map[string]func(interface{}) {
+    "field_name": func(value interface{}) {
+        if str, ok := value.(string); ok {
+            u.FieldName = str
+        }
+    },
+}
+u.FillFields(data, fieldMappings)
+
+// ❌ BAD: Nested if statements
+if field, ok := data["field_name"].(string); ok {
+    u.FieldName = field
+}
+```
+
+### Cache Monitoring
+
+#### Redis CLI Commands
+```bash
+# Check cache keys
+docker-compose exec redis redis-cli KEYS "base_lara_go_cache_users:*"
+
+# View cached data
+docker-compose exec redis redis-cli GET "base_lara_go_cache_users:1:data"
+
+# Check email indexes
+docker-compose exec redis redis-cli KEYS "*email*"
+```
+
+#### Cache Statistics
+- **Hit Rate**: Monitor cache effectiveness
+- **Memory Usage**: Track Redis memory consumption
+- **Key Distribution**: Analyze cache key patterns
+- **TTL Compliance**: Ensure proper expiration
 
 ---
 

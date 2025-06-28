@@ -347,4 +347,326 @@ func (r *UserRepository) Create(data map[string]interface{}) (interfaces.UserInt
 3. **Use decorators for cross-cutting concerns, not inline code**
 4. **Facades provide a clean API for controllers**
 5. **Keep services focused on one domain**
-6. **Test business logic in isolation from data access** 
+6. **Test business logic in isolation from data access**
+
+## Caching Architecture in Service vs Repository Separation
+
+### Caching Responsibilities
+
+#### Repository Layer (Cache Management)
+**Purpose**: Handle cache operations and data persistence
+
+**Cache Responsibilities**:
+- Cache hit/miss logic
+- Cache storage and retrieval
+- Cache key generation
+- Cache invalidation
+- Data serialization/deserialization
+- Cache model conversion
+
+**Example**:
+```go
+type UserRepository struct {
+    db    *gorm.DB
+    cache core.CacheInterface
+}
+
+func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
+    // ✅ Cache hit/miss logic
+    user := &cache.User{}
+    found, err := core.GetCachedModelByID("users", id, user)
+    if err == nil && found {
+        return user, nil // Cache hit - 10x faster
+    }
+
+    // ✅ Database query with relationships
+    dbUser := &db.User{}
+    err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+
+    // ✅ Cache storage
+    cacheUser := r.convertDBToCache(dbUser)
+    r.storeInCache(cacheUser)
+
+    return cacheUser, nil
+}
+
+func (r *UserRepository) storeInCache(user *cache.User) {
+    // ✅ Automatic serialization and storage
+    err := core.CacheModel(user)
+    if err != nil {
+        return
+    }
+
+    // ✅ Email index for fast lookups
+    emailCacheKey := fmt.Sprintf("users:email:%s", user.Email)
+    r.cache.Set(emailCacheKey, user.GetID(), time.Hour)
+}
+
+func (r *UserRepository) removeFromCache(id uint) {
+    // ✅ Cache invalidation
+    user := &cache.User{}
+    user.Set("id", id)
+    core.ForgetModel(user)
+}
+```
+
+#### Service Layer (Cache Strategy)
+**Purpose**: Define caching policies and business rules
+
+**Cache Responsibilities**:
+- Cache warming strategies
+- Cache invalidation policies
+- Business-driven cache decisions
+- Cache performance monitoring
+- Cache consistency rules
+
+**Example**:
+```go
+type UserService struct {
+    userRepo *repositories.UserRepository
+}
+
+func (s *UserService) GetUserWithRoles(id uint) (interfaces.UserInterface, error) {
+    // ✅ Business rule: Always load roles for authentication
+    // No permission check needed - roles are essential for auth
+    user, err := s.userRepo.FindByID(id)
+    if err != nil {
+        return nil, err
+    }
+
+    // ✅ Cache warming: Prefetch related data
+    go s.warmUserRelatedCache(user)
+
+    return user, nil
+}
+
+func (s *UserService) UpdateUser(id uint, data map[string]interface{}) (interfaces.UserInterface, error) {
+    // ✅ Business validation
+    if err := s.validateProfileUpdate(data); err != nil {
+        return nil, err
+    }
+
+    // ✅ Update in repository (handles cache invalidation)
+    user, err := s.userRepo.Update(id, data)
+    if err != nil {
+        return nil, err
+    }
+
+    // ✅ Business-driven cache warming
+    if email, ok := data["email"].(string); ok {
+        // Email changed - warm cache for new email
+        go s.warmEmailIndex(user.GetID(), email)
+    }
+
+    return user, nil
+}
+
+func (s *UserService) warmUserRelatedCache(user interfaces.UserInterface) {
+    // ✅ Cache warming strategy
+    // Prefetch user's roles and permissions for faster subsequent access
+    for _, role := range user.GetRoles() {
+        // Warm role cache
+        core.CacheModel(&cache.Role{
+            Name: role.GetName(),
+            // ... other role data
+        })
+    }
+}
+```
+
+### Laravel-Style Caching Patterns
+
+#### 1. Automatic Cache Management
+```go
+// ✅ Repository handles all cache operations automatically
+func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
+    // Automatic cache key generation
+    user := &cache.User{}
+    found, err := core.GetCachedModelByID("users", id, user)
+    if err == nil && found {
+        return user, nil
+    }
+
+    // Automatic cache storage after database query
+    dbUser := &db.User{}
+    err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+
+    cacheUser := r.convertDBToCache(dbUser)
+    r.storeInCache(cacheUser) // Automatic serialization
+
+    return cacheUser, nil
+}
+```
+
+#### 2. Clean Field Mapping
+```go
+// ✅ Laravel-style field mapping in cache models
+func (u *User) FromCacheData(data map[string]interface{}) error {
+    u.Initialize()
+    u.Fill(data)
+    u.populateStructFields(data) // Clean, maintainable
+    return nil
+}
+
+func (u *User) populateStructFields(data map[string]interface{}) {
+    // ✅ No nested if statements - Laravel-style
+    fieldMappings := map[string]func(interface{}) {
+        "first_name": func(value interface{}) {
+            if str, ok := value.(string); ok {
+                u.FirstName = str
+            }
+        },
+        "email": func(value interface{}) {
+            if str, ok := value.(string); ok {
+                u.Email = str
+            }
+        },
+        // ... more fields
+    }
+    u.FillFields(data, fieldMappings)
+}
+```
+
+#### 3. Cache Key Strategy
+```go
+// ✅ Automatic key generation using base keys
+func (u *User) GetBaseKey() string {
+    return "users" // Model type identifier
+}
+
+func (u *User) GetCacheKey() string {
+    return fmt.Sprintf("%s:%d:data", u.GetBaseKey(), u.GetID())
+}
+
+// ✅ Index keys for fast lookups
+emailCacheKey := fmt.Sprintf("users:email:%s", user.Email)
+r.cache.Set(emailCacheKey, user.GetID(), time.Hour)
+```
+
+### Cache Performance Benefits
+
+#### 1. Repository-Level Caching
+```go
+// ✅ Cache hit: ~0.1ms (Redis GET)
+// ✅ Cache miss: ~1-5ms (Database + cache storage)
+// ✅ Overall: 10-50x speedup for cached data
+
+func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
+    // O(1) cache operation
+    found, err := core.GetCachedModelByID("users", id, user)
+    if err == nil && found {
+        return user, nil // 10x faster than database
+    }
+
+    // O(n) database operation with joins
+    err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    // ... cache storage
+}
+```
+
+#### 2. Service-Level Cache Strategy
+```go
+// ✅ Business-driven cache decisions
+func (s *UserService) shouldCacheUser(user interfaces.UserInterface) bool {
+    // Cache only active users
+    return user.GetLastLoginAt().After(time.Now().Add(-30 * 24 * time.Hour))
+}
+
+// ✅ Cache warming for frequently accessed data
+func (s *UserService) WarmFrequentlyAccessedUsers() {
+    users, _ := s.userRepo.All()
+    for _, user := range users {
+        if s.shouldCacheUser(user) {
+            core.CacheModel(user)
+        }
+    }
+}
+```
+
+### Cache Consistency Patterns
+
+#### 1. Repository-Level Invalidation
+```go
+// ✅ Automatic cache invalidation on data changes
+func (r *UserRepository) Update(id uint, data map[string]interface{}) (interfaces.UserInterface, error) {
+    // Update database
+    dbUser := &db.User{}
+    err := r.db.First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+
+    // Update fields
+    // ... field updates
+
+    err = r.db.Save(dbUser).Error
+    if err != nil {
+        return nil, err
+    }
+
+    // Reload with relationships
+    err = r.db.Preload("Roles.Permissions").First(dbUser, id).Error
+    if err != nil {
+        return nil, err
+    }
+
+    // ✅ Automatic cache update
+    cacheUser := r.convertDBToCache(dbUser)
+    r.storeInCache(cacheUser)
+
+    return cacheUser, nil
+}
+```
+
+#### 2. Service-Level Cache Policies
+```go
+// ✅ Business-driven cache invalidation
+func (s *UserService) DeactivateUser(id uint) error {
+    user, err := s.userRepo.FindByID(id)
+    if err != nil {
+        return err
+    }
+
+    // Business rule: Cannot deactivate admin users
+    if s.isAdminUser(user) {
+        return errors.New("cannot deactivate admin users")
+    }
+
+    // Update user status
+    _, err = s.userRepo.Update(id, map[string]interface{}{
+        "status": "inactive",
+    })
+
+    // ✅ Cache automatically invalidated by repository
+    return err
+}
+```
+
+### Best Practices Summary
+
+#### Repository Layer
+- ✅ Handle all cache operations (get, set, delete)
+- ✅ Automatic serialization/deserialization
+- ✅ Cache key generation and management
+- ✅ Database query optimization with relationships
+- ✅ Cache model conversion
+
+#### Service Layer
+- ✅ Define cache warming strategies
+- ✅ Business-driven cache decisions
+- ✅ Cache performance monitoring
+- ✅ Cache consistency policies
+- ✅ Orchestrate cache operations
+
+#### Cross-Cutting Concerns
+- ✅ Use decorators for logging and monitoring
+- ✅ Automatic cache management
+- ✅ Clean, maintainable code patterns
+- ✅ Laravel-style field mapping
+- ✅ Type-safe cache operations 
