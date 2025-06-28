@@ -69,37 +69,88 @@ Decorators  Cross-Cutting
 - **Nginx**: Reverse proxy
 - **MailHog**: Email testing
 
-## 🚀 Quick Start
+## 🚀 Quick Start for Developers
 
-### Prerequisites
-- Docker and Docker Compose
-- Go 1.24+ (for local development)
+### One-Shot Setup (Recommended)
 
-### Installation
+**If you have make:**
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd base_lara_go_project
-   ```
+```sh
+make clean
+make install_dev
+```
 
-2. **Start the development environment**
-   ```bash
-   docker-compose up -d
-   ```
+- You'll be prompted for your desired app domain (e.g. `myproject.test`).
+- All config, env, and SSL cert files are generated from templates.
+- All containers and services are started automatically.
 
-3. **Access the application**
-   - **Frontend**: https://app.baselaragoproject.test
-   - **API**: https://api.baselaragoproject.test
-   - **Mail Testing**: http://mail.baselaragoproject.test:8025
+**If you don't have make:**
 
-### Development
+```sh
+bash setup/clean.sh
+bash setup/install.sh dev
+```
 
-The application uses a hot-reload system for both frontend and backend:
+---
 
-- **Frontend**: Automatic reloading with Vite
-- **Backend**: Air for Go hot-reloading
-- **Worker**: Automatic restart on code changes
+## Domain & Environment Switching
+
+- To change your app domain or environment:
+  ```sh
+  make switch_domain
+  # Then:
+  make clean
+  make install_dev
+  ```
+- All URLs and configs will be updated to the new domain.
+
+---
+
+## 🛠️ Configuration & Templates
+
+- All environment and config files are generated from `.template` files (e.g. `.env.template`, `docker-compose.yaml.template`).
+- **Only template files are committed to git; generated files are ignored.**
+- To change domains or environments, use `make switch_domain` and rerun the install.
+
+---
+
+## 🔒 SSL & Health Check
+
+- Local SSL certs are generated and trusted automatically.
+- The health check ignores self-signed cert warnings for a frictionless experience.
+
+---
+
+## 🧹 Clean Slate
+
+- `make clean` removes all generated configs, envs, and certs (including Docker Compose, Nginx, and SSL certs).
+- Always start fresh with `make clean && make install_dev` if you hit issues.
+
+---
+
+## 🐳 Docker & Troubleshooting
+
+- If you hit Docker Hub rate limits, run `docker login` and try again.
+- For any issues, rerun `make clean` and `make install_dev`.
+- If you see SSL warnings in your browser, proceed past them for local development.
+
+---
+
+## 📁 Project Structure
+
+- Only `.template` files are tracked in git.
+- All generated files are ignored and rebuilt as needed.
+
+---
+
+## 📜 Scripting & Automation
+
+- All setup, install, clean, and domain switching logic is in the `setup/` directory.
+- See [docs/SETUP_SCRIPTS.md](docs/SETUP_SCRIPTS.md) for a full guide to the scripting system and automation.
+
+---
+
+Happy hacking!
 
 ## 📁 Project Structure
 
@@ -298,3 +349,28 @@ curl -X POST https://api.baselaragoproject.test/v1/auth/register \
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Docker Compose Version Requirement
+
+> **Note:** This project uses the `include` feature in `docker-compose.yaml` to compose multiple files.  
+> You must use Docker Compose v2.20.0 or newer.  
+> Check your version with:
+>
+> ```bash
+> docker-compose --version
+> ```
+> If you need to upgrade, use Homebrew:
+> ```bash
+> brew upgrade docker-compose
+> ```
+
+## SSL Certificates for Local Services
+
+For each new service (e.g., `sentry.baselaragoproject.test`), generate and trust a self-signed SSL certificate:
+
+```bash
+./docker/ssl/gen_certs.sh sentry.baselaragoproject.test
+./docker/ssl/trust_certs_mac.sh sentry.baselaragoproject.test
+```
+
+This ensures your browser and Docker containers trust the local HTTPS endpoint.

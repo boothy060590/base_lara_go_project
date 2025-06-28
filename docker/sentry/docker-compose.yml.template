@@ -1,0 +1,77 @@
+
+services:
+  # PostgreSQL for Sentry
+  sentry-postgres:
+    image: postgres:15
+    container_name: sentry-postgres
+    environment:
+      POSTGRES_DB: sentry
+      POSTGRES_USER: sentry
+      POSTGRES_PASSWORD: sentry_password
+    volumes:
+      - sentry-postgres-data:/var/lib/postgresql/data
+    networks:
+      - sentry-network
+
+  # Redis for Sentry
+  sentry-redis:
+    image: redis:7-alpine
+    container_name: sentry-redis
+    ports:
+      - "6380:6379"  # Use different external port to avoid conflict with main Redis
+    volumes:
+      - sentry-redis-data:/data
+    networks:
+      - sentry-network
+
+  # ClickHouse for Sentry
+  sentry-clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: sentry-clickhouse
+    environment:
+      CLICKHOUSE_DB: sentry
+      CLICKHOUSE_USER: sentry
+      CLICKHOUSE_PASSWORD: sentry_password
+    volumes:
+      - sentry-clickhouse-data:/var/lib/clickhouse
+    networks:
+      - sentry-network
+
+  # Sentry Worker
+  sentry-worker:
+    image: getsentry/sentry:latest
+    container_name: sentry-worker
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+      - sentry-clickhouse
+    env_file:
+      - envs/sentry.env
+    command: ["run", "worker"]
+    networks:
+      - sentry-network
+    restart: unless-stopped
+
+  # Sentry Cron
+  sentry-cron:
+    image: getsentry/sentry:latest
+    container_name: sentry-cron
+    depends_on:
+      - sentry-postgres
+      - sentry-redis
+      - sentry-clickhouse
+    env_file:
+      - envs/sentry.env
+    command: ["run", "cron"]
+    networks:
+      - sentry-network
+    restart: unless-stopped
+
+volumes:
+  sentry-postgres-data:
+  sentry-redis-data:
+  sentry-clickhouse-data:
+
+networks:
+  sentry-network:
+    driver: bridge 

@@ -12,3 +12,13 @@ api/.env
 # Ignore SSL certificates
 docker/ssl/certs/*.crt
 docker/ssl/certs/*.key
+
+# Ignore generated Docker Compose and env files
+docker-compose.yaml
+docker/sentry/docker-compose.yml
+api/.env
+frontend/.env
+docker/api-nginx.conf
+docker/sentry/nginx.conf
+docker/nginx.conf
+
