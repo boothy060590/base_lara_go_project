@@ -1,7 +1,7 @@
 package processors
 
 import (
-	"base_lara_go_project/app/core"
+	mail_core "base_lara_go_project/app/core/mail"
 )
 
 // MailJobProcessor handles mail job processing
@@ -19,5 +19,9 @@ func (m *MailJobProcessor) CanProcess(jobType string) bool {
 
 // Process processes a mail job
 func (m *MailJobProcessor) Process(jobData []byte) error {
-	return core.ProcessMailJobFromQueue(jobData)
+	return mail_core.ProcessMailJobFromQueue(jobData)
+}
+
+func ProcessMailJob(jobData []byte) error {
+	return mail_core.ProcessMailJobFromQueue(jobData)
 }

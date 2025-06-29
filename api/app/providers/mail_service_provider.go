@@ -2,58 +2,38 @@ package providers
 
 import (
 	"fmt"
-	"log"
-	"strconv"
 
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
+	mail_core "base_lara_go_project/app/core/mail"
 	"base_lara_go_project/config"
-
-	"github.com/joho/godotenv"
-	"gopkg.in/gomail.v2"
 )
 
-func RegisterMailer() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatalf("Error loading .env file")
-	}
+// MailServiceProvider registers mail services with the container
+type MailServiceProvider struct{}
 
-	// Get mail configuration from config package
+// NewMailServiceProvider creates a new mail service provider
+func NewMailServiceProvider() *MailServiceProvider {
+	return &MailServiceProvider{}
+}
+
+// Register registers mail services with the container
+func (p *MailServiceProvider) Register() error {
+	// Create mail provider factory
+	factory := mail_core.NewMailProviderFactory(app_core.App)
+
+	// Get mail configuration
 	mailConfig := config.MailConfig()
-	defaultMailer := mailConfig["default"].(string)
-	mailers := mailConfig["mailers"].(map[string]interface{})
-	mailerConfig := mailers[defaultMailer].(map[string]interface{})
-	fromConfig := mailConfig["from"].(map[string]interface{})
 
-	host := mailerConfig["host"].(string)
-	portStr := mailerConfig["port"].(string)
-	username := mailerConfig["username"].(string)
-	password := mailerConfig["password"].(string)
-	from := fromConfig["address"].(string)
-	fromName := fromConfig["name"].(string)
-
-	// Convert port string to integer
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		log.Fatalf("Invalid MAIL_PORT: %s", portStr)
+	// Register mail provider from config
+	if err := factory.RegisterFromConfig(mailConfig); err != nil {
+		return fmt.Errorf("failed to register mail provider: %w", err)
 	}
 
-	// Create mail configuration
-	mailConfigInstance := &core.MailConfig{
-		Host:     host,
-		Port:     port,
-		Username: username,
-		Password: password,
-		From:     from,
-		FromName: fromName,
-	}
+	return nil
+}
 
-	// Create mailer dialer
-	mailer := gomail.NewDialer(host, port, username, password)
-
-	// Create mail provider and set global instance
-	mailProvider := core.NewMailProvider(mailConfigInstance, mailer)
-	core.SetMailService(mailProvider)
-
-	fmt.Printf("Mailer configured for %s:%d\n", host, port)
+// RegisterMailer registers the mail service provider
+func RegisterMailer() error {
+	provider := NewMailServiceProvider()
+	return provider.Register()
 }

@@ -1,6 +1,6 @@
 # Developer Makefile for base_lara_go_project
 
-.PHONY: help install certs npm-install sentry-secret env-inject clean up down reset install_dev install_staging install_prod quickstart health-check switch_domain
+.PHONY: help install certs npm-install sentry-secret env-inject clean up down reset install_dev install_staging install_prod quickstart health-check switch_domain multi_worker_info
 
 help:
 	@echo "Available commands:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make install_staging # Install for staging environment"
 	@echo "  make install_prod   # Install for production environment"
 	@echo "  make quickstart     # Start stack with existing envs and node_modules (no full setup)"
+	@echo "  make multi_worker_info # Print instructions for setting up multi-worker infrastructure"
 
 install: certs npm-install sentry-secret env-inject
 
@@ -71,4 +72,16 @@ quickstart:
 	@echo "   You can check if Sentry is ready with: make health-check"
 
 switch_domain:
-	bash setup/switch_domain.sh 
+	bash setup/switch_domain.sh
+
+multi_worker_info:
+	@echo ""
+	@echo "To enable multi-worker infrastructure for queues:"
+	@echo "1. Run 'bash setup/generate-workers.sh' to generate example worker envs and Docker Compose services."
+	@echo "2. Review and edit the generated docker-compose.workers.yaml and .env.worker* files."
+	@echo "3. Add/merge worker services into your main docker-compose.yaml if needed."
+	@echo "4. Update your Go queue config (config.QueueConfig()) to reflect the new workers and their queue assignments."
+	@echo "5. Run: docker compose -f docker-compose.yaml -f docker-compose.workers.yaml up -d"
+	@echo ""
+	@echo "NOTE: The default setup runs a single worker with all queues. Multi-worker is advanced and requires manual config."
+	@echo "" 

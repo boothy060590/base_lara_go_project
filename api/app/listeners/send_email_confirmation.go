@@ -1,9 +1,11 @@
 package listeners
 
 import (
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
+	events_core "base_lara_go_project/app/core/events"
+	facades_core "base_lara_go_project/app/core/facades"
+	mail_core "base_lara_go_project/app/core/mail"
 	authEvents "base_lara_go_project/app/events/auth"
-	"base_lara_go_project/app/facades"
 	"fmt"
 )
 
@@ -19,7 +21,7 @@ type SendEmailConfirmation struct {
 
 // RegisterSelf registers this listener with the event system
 func RegisterSelf() {
-	core.RegisterEvent("UserCreated", func(e core.EventInterface) core.ListenerInterface {
+	events_core.RegisterEvent("UserCreated", func(e app_core.EventInterface) app_core.ListenerInterface {
 		listener := &SendEmailConfirmation{}
 		if userCreated, ok := e.(*authEvents.UserCreated); ok {
 			listener.Event = *userCreated
@@ -32,7 +34,7 @@ func (l *SendEmailConfirmation) Handle(mailService interface{}) error {
 	user := l.Event.GetUser()
 
 	// Prepare template data
-	templateData := core.EmailTemplateData{
+	templateData := mail_core.EmailTemplateData{
 		Subject:        "Welcome to Base Laravel Go Project!",
 		AppName:        "Base Laravel Go Project",
 		RecipientEmail: user.Email,
@@ -41,13 +43,13 @@ func (l *SendEmailConfirmation) Handle(mailService interface{}) error {
 	}
 
 	// Render email template
-	body, err := core.RenderEmailTemplate("auth/welcome", templateData)
+	body, err := mail_core.RenderEmailTemplate("auth/welcome", templateData)
 	if err != nil {
 		return fmt.Errorf("failed to render email template: %v", err)
 	}
 
 	// Send email asynchronously via mail queue
-	err = facades.MailAsync([]string{user.Email}, templateData.Subject, body)
+	err = facades_core.MailAsync([]string{user.Email}, templateData.Subject, body)
 	if err != nil {
 		return fmt.Errorf("failed to queue welcome email: %v", err)
 	}

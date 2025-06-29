@@ -1,7 +1,7 @@
 package providers
 
 import (
-	"base_lara_go_project/app/facades"
+	facades_core "base_lara_go_project/app/core/facades"
 	"base_lara_go_project/app/services"
 	"log"
 	"sync"
@@ -47,7 +47,7 @@ func RegisterServices() {
 		GlobalServiceContainer.Register("user", userService)
 
 		// Set up the service facade
-		facades.SetUserService(userService)
+		facades_core.SetUserService(userService)
 
 		log.Println("User service registered successfully")
 	} else {

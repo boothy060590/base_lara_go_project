@@ -1,7 +1,7 @@
 package db
 
 import (
-	"base_lara_go_project/app/core"
+	database_core "base_lara_go_project/app/core/database"
 	"base_lara_go_project/app/models/interfaces"
 
 	"strings"
@@ -11,7 +11,7 @@ import (
 )
 
 type User struct {
-	core.DatabaseModel
+	database_core.DatabaseModel
 	FirstName     string `gorm:"type:varchar(255);not null" json:"first_name"`
 	LastName      string `gorm:"type:varchar(255);not null" json:"last_name"`
 	Email         string `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
@@ -118,7 +118,7 @@ func (user *User) GetResetPassword() bool {
 
 // Role model for database
 type Role struct {
-	core.DatabaseModel
+	database_core.DatabaseModel
 	Name        string       `gorm:"type:varchar(64);unique;not null" json:"name"`
 	Description string       `gorm:"type:varchar(255)" json:"description"`
 	Users       []User       `gorm:"many2many:user_roles;" json:"users"`
@@ -170,7 +170,7 @@ func (role *Role) GetPermissions() []interfaces.PermissionInterface {
 
 // Permission model for database
 type Permission struct {
-	core.DatabaseModel
+	database_core.DatabaseModel
 	Name        string `gorm:"type:varchar(64);unique;not null" json:"name"`
 	Description string `gorm:"type:varchar(255)" json:"description"`
 	Roles       []Role `gorm:"many2many:role_permissions;" json:"roles"`
@@ -188,7 +188,7 @@ func (p *Permission) GetTableName() string {
 
 // GetID returns the permission ID
 func (p *Permission) GetID() uint {
-	return p.Model.ID
+	return p.GetUint("id")
 }
 
 // Interface methods for events

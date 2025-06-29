@@ -1,7 +1,7 @@
 package listeners
 
 import (
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
 )
 
 // BaseListener provides a base structure for all listeners
@@ -16,4 +16,4 @@ func (l *BaseListener) Handle(mailService interface{}) error {
 }
 
 // ListenerFactory is a function type that creates listeners from events
-type ListenerFactory func(event interface{}) core.ListenerInterface
+type ListenerFactory func(event interface{}) app_core.ListenerInterface

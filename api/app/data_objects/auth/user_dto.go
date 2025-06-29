@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"base_lara_go_project/app/core"
+	core "base_lara_go_project/app/core/dtos"
 	"base_lara_go_project/app/models/interfaces"
 )
 

@@ -1,14 +1,15 @@
 package cache
 
 import (
-	"base_lara_go_project/app/core"
+	cache_core "base_lara_go_project/app/core/cache"
+	models_core "base_lara_go_project/app/core/models"
 	"base_lara_go_project/app/models/interfaces"
 	"fmt"
 	"time"
 )
 
 type User struct {
-	core.BaseModelData
+	models_core.BaseModelData
 	FirstName     string `json:"first_name"`
 	LastName      string `json:"last_name"`
 	Email         string `json:"email"`
@@ -213,7 +214,7 @@ func (user *User) GetRoles() []interfaces.RoleInterface {
 
 // Role model for cache
 type Role struct {
-	core.CachedModel
+	cache_core.CachedModel
 	Name        string       `json:"name"`
 	Description string       `json:"description"`
 	Users       []User       `json:"users"`
@@ -260,7 +261,7 @@ func (role *Role) GetPermissions() []interfaces.PermissionInterface {
 
 // Permission model for cache
 type Permission struct {
-	core.CachedModel
+	cache_core.CachedModel
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Roles       []Role `json:"roles"`

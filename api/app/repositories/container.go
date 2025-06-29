@@ -1,7 +1,7 @@
 package repositories
 
 import (
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
 	"base_lara_go_project/app/models/interfaces"
 	"sync"
 
@@ -50,7 +50,7 @@ func (rc *RepositoryContainer) GetUserRepository() (*UserRepository, bool) {
 var GlobalRepositoryContainer = NewRepositoryContainer()
 
 // RegisterUserRepository registers the user repository with dependencies
-func RegisterUserRepository(db *gorm.DB, cache core.CacheInterface) {
+func RegisterUserRepository(db *gorm.DB, cache app_core.CacheInterface) {
 	userRepo := NewUserRepository(db, cache)
 	GlobalRepositoryContainer.Register("user", userRepo)
 }

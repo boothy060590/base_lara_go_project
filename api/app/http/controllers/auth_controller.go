@@ -1,15 +1,12 @@
 package controllers
 
 import (
-	"base_lara_go_project/app/core"
+	facades_core "base_lara_go_project/app/core/facades"
 	"base_lara_go_project/app/data_objects/auth"
 	authEvents "base_lara_go_project/app/events/auth"
-	"base_lara_go_project/app/facades"
 	"base_lara_go_project/app/http/requests"
 	"base_lara_go_project/app/utils/token"
 	"net/http"
-
-	db "base_lara_go_project/app/models/db"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,7 +29,7 @@ func Register(c *gin.Context) {
 		"mobile_number": input.MobileNumber,
 	}
 
-	user, err := facades.CreateUser(userData, []string{"customer"})
+	user, err := facades_core.CreateUser(userData, []string{"customer"})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -43,7 +40,7 @@ func Register(c *gin.Context) {
 
 	// Dispatch UserCreated event asynchronously (like event(new UserWasCreated($user)))
 	userCreatedEvent := &authEvents.UserCreated{User: userDTO}
-	facades.EventAsync(userCreatedEvent)
+	facades_core.EventAsync(userCreatedEvent)
 
 	c.JSON(http.StatusOK, gin.H{"message": user.GetEmail() + " successfully registered", "roles": user.GetRoles()})
 }
@@ -57,7 +54,7 @@ func Login(c *gin.Context) {
 	}
 
 	// Direct service call
-	user, err := facades.AuthenticateUser(input.Email, input.Password)
+	user, err := facades_core.AuthenticateUser(input.Email, input.Password)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "email or password is incorrect."})
 		return
@@ -90,7 +87,7 @@ func CurrentUser(c *gin.Context) {
 	}
 
 	// Direct service call
-	user, err := facades.GetUserWithRoles(userId)
+	user, err := facades_core.GetUserWithRoles(userId)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -98,31 +95,4 @@ func CurrentUser(c *gin.Context) {
 
 	userDTO := auth.FromUser(user)
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": userDTO})
-}
-
-// TestEmailTemplate demonstrates the new email templating system
-func TestEmailTemplate(c *gin.Context) {
-	// Create a test user
-	testUser := &db.User{
-		FirstName:    "John",
-		LastName:     "Doe",
-		Email:        "john.doe@example.com",
-		MobileNumber: "+1234567890",
-	}
-
-	// Send a test email using the template facade
-	err := facades.MailTemplateToUser(testUser, "auth/welcome", core.EmailTemplateData{
-		Subject:        "Test Email Template",
-		AppName:        "Base Laravel Go Project",
-		RecipientEmail: testUser.Email,
-		User:           testUser,
-		LoginURL:       "https://app.baselaragoproject.test/login",
-	})
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send test email: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Test email sent successfully to " + testUser.Email})
 }

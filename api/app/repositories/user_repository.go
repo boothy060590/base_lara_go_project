@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
+	cache_core "base_lara_go_project/app/core/cache"
 	"base_lara_go_project/app/models/cache"
 	"base_lara_go_project/app/models/db"
 	"base_lara_go_project/app/models/interfaces"
@@ -15,11 +16,11 @@ import (
 // UserRepository handles user data operations with cache/database decision logic
 type UserRepository struct {
 	db    *gorm.DB
-	cache core.CacheInterface
+	cache app_core.CacheInterface
 }
 
 // NewUserRepository creates a new user repository
-func NewUserRepository(db *gorm.DB, cache core.CacheInterface) *UserRepository {
+func NewUserRepository(db *gorm.DB, cache app_core.CacheInterface) *UserRepository {
 	return &UserRepository{
 		db:    db,
 		cache: cache,
@@ -35,7 +36,7 @@ func (r *UserRepository) GetDB() *gorm.DB {
 func (r *UserRepository) FindByID(id uint) (interfaces.UserInterface, error) {
 	// Try to get from cache first
 	user := &cache.User{}
-	found, err := core.GetCachedModelByID("users", id, user)
+	found, err := cache_core.GetCachedModelByID("users", id, user)
 	if err == nil && found {
 		return user, nil
 	}
@@ -355,7 +356,7 @@ func (r *UserRepository) convertDBToCache(dbUser *db.User) *cache.User {
 // storeInCache stores a user in cache
 func (r *UserRepository) storeInCache(user *cache.User) {
 	// Use the cache service to properly serialize and store the model
-	err := core.CacheModel(user)
+	err := cache_core.CacheModel(user)
 	if err != nil {
 		// Log error but don't fail the operation
 		return
@@ -370,7 +371,7 @@ func (r *UserRepository) storeInCache(user *cache.User) {
 func (r *UserRepository) removeFromCache(id uint) {
 	user := &cache.User{}
 	user.Set("id", id)
-	core.ForgetModel(user)
+	cache_core.ForgetModel(user)
 
 	// Also remove any email indexes (we'd need to get the email first, but for simplicity we'll just let them expire)
 }

@@ -1,27 +1,49 @@
 package config
 
+import "base_lara_go_project/app/core/env"
+
+// QueueConfig returns the queue configuration with fallback values
 func QueueConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"default": getEnv("QUEUE_CONNECTION", "sqs"),
+		"default": env.GetEnv("QUEUE_CONNECTION", "sync"),
 		"connections": map[string]interface{}{
+			"sync": map[string]interface{}{
+				"driver": "sync",
+			},
 			"sqs": map[string]interface{}{
 				"driver":   "sqs",
-				"key":      getEnv("SQS_ACCESS_KEY", "local"),
-				"secret":   getEnv("SQS_SECRET_KEY", "local"),
-				"region":   getEnv("SQS_REGION", "us-east-1"),
-				"queue":    getEnv("SQS_QUEUE", "default"),
-				"endpoint": getEnv("SQS_ENDPOINT", "http://localhost:9324"),
+				"key":      env.GetEnv("SQS_ACCESS_KEY", "local"),
+				"secret":   env.GetEnv("SQS_SECRET_KEY", "local"),
+				"region":   env.GetEnv("SQS_REGION", "us-east-1"),
+				"queue":    env.GetEnv("SQS_QUEUE", "default"),
+				"endpoint": env.GetEnv("SQS_ENDPOINT", "http://localhost:9324"),
 			},
 		},
 		"queues": map[string]interface{}{
-			"jobs":   getEnv("SQS_QUEUE_JOBS", "default"),
-			"mail":   getEnv("SQS_QUEUE_MAIL", "default"),
-			"events": getEnv("SQS_QUEUE_EVENTS", "default"),
+			"jobs":   env.GetEnv("SQS_QUEUE_JOBS", "default"),
+			"mail":   env.GetEnv("SQS_QUEUE_MAIL", "default"),
+			"events": env.GetEnv("SQS_QUEUE_EVENTS", "default"),
 		},
 		"enabled_queues": []string{
-			getEnv("SQS_QUEUE_JOBS", "default"),
-			getEnv("SQS_QUEUE_MAIL", "default"),
-			getEnv("SQS_QUEUE_EVENTS", "default"),
+			env.GetEnv("SQS_QUEUE_JOBS", "default"),
+			env.GetEnv("SQS_QUEUE_MAIL", "default"),
+			env.GetEnv("SQS_QUEUE_EVENTS", "default"),
+		},
+		"workers": map[string]interface{}{
+			"default": map[string]interface{}{
+				"queues":       []string{"mail", "jobs", "events", "default"},
+				"max_jobs":     env.GetEnvInt("WORKER_MAX_JOBS", 1000),
+				"memory_limit": env.GetEnvInt("WORKER_MEMORY_LIMIT", 128),
+				"timeout":      env.GetEnvInt("WORKER_TIMEOUT", 60),
+				"sleep":        env.GetEnvInt("WORKER_SLEEP", 3),
+				"tries":        env.GetEnvInt("WORKER_TRIES", 3),
+			},
+		},
+		"api_queues": map[string]interface{}{
+			"mail":    "mail",
+			"jobs":    "jobs",
+			"events":  "events",
+			"default": "default",
 		},
 	}
 }

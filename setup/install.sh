@@ -120,57 +120,132 @@ sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$PROJECT_ROOT/frontend/.env"
 cp "$PROJECT_ROOT/docker-compose.yaml.template" "$PROJECT_ROOT/docker-compose.yaml"
 sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$PROJECT_ROOT/docker-compose.yaml"
 
-# Generate docker/sentry/docker-compose.yml from template
-cp "$PROJECT_ROOT/docker/sentry/docker-compose.yml.template" "$PROJECT_ROOT/docker/sentry/docker-compose.yml"
-sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$PROJECT_ROOT/docker/sentry/docker-compose.yml"
-
 # Generate nginx config files from templates if they exist
-for conf in "$PROJECT_ROOT/docker/api-nginx.conf" "$PROJECT_ROOT/docker/sentry/nginx.conf" "$PROJECT_ROOT/docker/nginx.conf"; do
+for conf in "$PROJECT_ROOT/docker/api-nginx.conf" "$PROJECT_ROOT/docker/nginx.conf"; do
   if [ -f "$conf.template" ]; then
     cp "$conf.template" "$conf"
     sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$conf"
   fi
 done
 
-echo "[1/6] Ensuring correct Node.js version with nvm..."
+echo "[1/7] Ensuring correct Node.js version with nvm..."
 bash "$SCRIPT_DIR/node.sh"
 
-echo "[2/6] Generating and trusting SSL certs..."
+echo "[2/7] Generating and trusting SSL certs..."
 bash "$SCRIPT_DIR/certs.sh"
 echo -e "\n⚠️  If this is your first time using this domain, you may need to visit each local HTTPS service in your browser and accept the SSL warning for local development."
 echo -e "   • https://app.$APP_DOMAIN"
 echo -e "   • https://api.$APP_DOMAIN"
-echo -e "   • https://sentry.$APP_DOMAIN"
 echo -e "   • https://mail.$APP_DOMAIN"
 echo -e "   • https://sqs.$APP_DOMAIN"
 
-echo "[3/6] Running containerized npm install..."
+echo "[3/7] Running containerized npm install..."
 bash "$SCRIPT_DIR/npm-install.sh"
 
-echo "[4/6] Generating and injecting Sentry secret key..."
-bash "$SCRIPT_DIR/sentry-secret.sh"
-
-echo "[5/6] Running env-inject logic..."
-bash "$SCRIPT_DIR/env-inject.sh"
-
-# Ensure SENTRY_SECRET_KEY is present before starting the stack
-if ! grep -q '^SENTRY_SECRET_KEY=' "$PROJECT_ROOT/docker/sentry/envs/sentry.env"; then
-  echo "[ERROR] SENTRY_SECRET_KEY is missing from docker/sentry/envs/sentry.env. Aborting startup." >&2
-  exit 1
+echo "[4/7] Installing Go dependencies..."
+cd "$PROJECT_ROOT/api"
+if command -v go &> /dev/null; then
+  echo "Checking Go dependencies..."
+  if [ -f "go.mod" ]; then
+    echo "go.mod found, checking for missing dependencies..."
+    if ! go list -m gorm.io/driver/mysql &>/dev/null; then
+      echo "Installing gorm.io/driver/mysql..."
+      go get gorm.io/driver/mysql
+    fi
+    if ! go list -m gorm.io/driver/postgres &>/dev/null; then
+      echo "Installing gorm.io/driver/postgres..."
+      go get gorm.io/driver/postgres
+    fi
+    if ! go list -m gorm.io/driver/sqlite &>/dev/null; then
+      echo "Installing gorm.io/driver/sqlite..."
+      go get gorm.io/driver/sqlite
+    fi
+    if ! go list -m github.com/redis/go-redis/v9 &>/dev/null; then
+      echo "Installing github.com/redis/go-redis/v9..."
+      go get github.com/redis/go-redis/v9
+    fi
+    if ! go list -m github.com/getsentry/sentry-go &>/dev/null; then
+      echo "Installing github.com/getsentry/sentry-go..."
+      go get github.com/getsentry/sentry-go
+    fi
+    echo "Running go mod tidy..."
+    go mod tidy
+    echo "Go dependencies are up to date."
+  else
+    echo "No go.mod found, initializing Go module..."
+    go mod init base_lara_go_project
+    go get gorm.io/driver/mysql
+    go get gorm.io/driver/postgres
+    go get gorm.io/driver/sqlite
+    go get github.com/redis/go-redis/v9
+    go get github.com/getsentry/sentry-go
+    go mod tidy
+    echo "Go module initialized and dependencies installed."
+  fi
+else
+  echo "[WARNING] Go is not installed. Please install Go and run 'go mod tidy' in the api directory."
 fi
 
-echo "[6/6] Bringing up the Docker stack..."
+# Modular install scripts for queue and logging setup
+echo "[5/7] Configuring queue and logging options..."
+QUEUE_MODE=$(bash "$SCRIPT_DIR/queue_mode_prompt.sh")
+LOG_MODE=$(bash "$SCRIPT_DIR/logging_prompt.sh")
+
+# Conditional Sentry setup
+if [ "$LOG_MODE" = "sentry" ]; then
+  echo "[6/7] Setting up Sentry logging..."
+  echo "   • Generating and injecting Sentry secret key..."
+  bash "$SCRIPT_DIR/sentry-secret.sh"
+  
+  echo "   • Running env-inject logic..."
+  bash "$SCRIPT_DIR/env-inject.sh"
+  
+  # Ensure SENTRY_SECRET_KEY is present before starting the stack
+  if ! grep -q '^SENTRY_SECRET_KEY=' "$PROJECT_ROOT/docker/sentry/envs/sentry.env"; then
+    echo "[ERROR] SENTRY_SECRET_KEY is missing from docker/sentry/envs/sentry.env. Aborting startup." >&2
+    exit 1
+  fi
+  
+  # Generate Sentry docker-compose and nginx config
+  echo "   • Setting up Sentry Docker configuration..."
+  cp "$PROJECT_ROOT/docker/sentry/docker-compose.yml.template" "$PROJECT_ROOT/docker/sentry/docker-compose.yml"
+  sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$PROJECT_ROOT/docker/sentry/docker-compose.yml"
+  
+  if [ -f "$PROJECT_ROOT/docker/sentry/nginx.conf.template" ]; then
+    cp "$PROJECT_ROOT/docker/sentry/nginx.conf.template" "$PROJECT_ROOT/docker/sentry/nginx.conf"
+    sed -i '' "s|{{APP_DOMAIN}}|$APP_DOMAIN|g" "$PROJECT_ROOT/docker/sentry/nginx.conf"
+  fi
+  
+  echo "   • Sentry setup complete."
+  echo -e "   • Sentry will be available at: https://sentry.$APP_DOMAIN"
+else
+  echo "[6/7] Skipping Sentry setup (using local logging)..."
+fi
+
+echo "[7/7] Configuring environment and Docker Compose..."
+bash "$SCRIPT_DIR/env_setup.sh" "$QUEUE_MODE" "$LOG_MODE"
+bash "$SCRIPT_DIR/docker_compose_setup.sh" "$QUEUE_MODE" "$LOG_MODE"
+
+if [ "$QUEUE_MODE" = "sqs" ]; then
+    echo "   • Setting up multi-worker infrastructure..."
+    bash "$SCRIPT_DIR/generate-workers.sh"
+fi
+
+echo "[8/8] Starting Docker containers..."
 cd "$PROJECT_ROOT"
 docker-compose up -d
 
-echo "[7/7] Waiting for Sentry to be ready..."
-bash "$SCRIPT_DIR/health-check.sh"
-
+echo ""
+echo "Environment setup complete."
+echo "Check api/env/.env.worker for logging and Redis config."
+echo "Check docker-compose.yaml for correct worker and logging setup."
 echo -e "\n🎉 Setup complete! The stack is now running."
 echo -e "\n📋 Available services:"
 echo "   • Frontend: https://app.$APP_DOMAIN"
 echo "   • API: https://api.$APP_DOMAIN"
-echo "   • Sentry: https://sentry.$APP_DOMAIN"
+if [ "$LOG_MODE" = "sentry" ]; then
+  echo "   • Sentry: https://sentry.$APP_DOMAIN"
+fi
 echo "   • MailHog: https://mail.$APP_DOMAIN"
 echo "   • SQS UI: https://sqs.$APP_DOMAIN"
 echo -e "\n🔧 Useful commands:"

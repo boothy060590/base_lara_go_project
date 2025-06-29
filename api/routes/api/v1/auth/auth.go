@@ -15,8 +15,6 @@ func Routes(router *gin.Engine) {
 	public.POST("/login", controllers.Login)
 	public.Use(middlewares.JwtAuthMiddleware()).GET("/user", controllers.CurrentUser)
 
-	// Test endpoint for email templating system
-	public.POST("/test-email-template", controllers.TestEmailTemplate)
 }
 
 func init() {

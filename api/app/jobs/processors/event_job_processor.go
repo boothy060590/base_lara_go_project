@@ -1,7 +1,7 @@
 package processors
 
 import (
-	"base_lara_go_project/app/core"
+	events_core "base_lara_go_project/app/core/events"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -38,10 +38,10 @@ func (e *EventJobProcessor) Process(jobData []byte) error {
 	}
 
 	log.Printf("Processing event: %s", eventName)
-	event, err := core.CreateEvent(eventName, eventPayload)
+	event, err := events_core.CreateEvent(eventName, eventPayload)
 	if err != nil {
 		return fmt.Errorf("failed to create event: %v", err)
 	}
 
-	return core.EventDispatcherInstance.DispatchSync(event)
+	return events_core.EventDispatcherInstance.DispatchSync(event)
 }

@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"base_lara_go_project/app/facades"
+	facades_core "base_lara_go_project/app/core/facades"
 )
 
 // CreateUserJob handles user creation
@@ -13,5 +13,5 @@ type CreateUserJob struct {
 // Handle processes the user creation job
 func (j *CreateUserJob) Handle() (any, error) {
 	// Use service facade for Laravel-style access
-	return facades.CreateUser(j.UserData, j.RoleNames)
+	return facades_core.CreateUser(j.UserData, j.RoleNames)
 }

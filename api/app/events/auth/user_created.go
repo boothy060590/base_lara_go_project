@@ -1,7 +1,8 @@
 package auth
 
 import (
-	"base_lara_go_project/app/core"
+	app_core "base_lara_go_project/app/core/app"
+	events_core "base_lara_go_project/app/core/events"
 	"base_lara_go_project/app/data_objects/auth"
 	"encoding/json"
 )
@@ -19,7 +20,7 @@ func (e *UserCreated) GetEventName() string {
 }
 
 func init() {
-	core.RegisterEventFactory("UserCreated", func(data map[string]interface{}) (core.EventInterface, error) {
+	events_core.RegisterEventFactory("UserCreated", func(data map[string]interface{}) (app_core.EventInterface, error) {
 		userData, _ := json.Marshal(data["User"])
 		var dto auth.UserDTO
 		if err := json.Unmarshal(userData, &dto); err != nil {

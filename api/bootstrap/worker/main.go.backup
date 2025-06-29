@@ -1,0 +1,82 @@
+package main
+
+import (
+	"base_lara_go_project/app/core"
+	"base_lara_go_project/app/facades"
+	"base_lara_go_project/app/providers"
+	"base_lara_go_project/config"
+	"flag"
+	"log"
+)
+
+func main() {
+	// Parse command line arguments for worker type
+	var workerType string
+	flag.StringVar(&workerType, "worker", "default", "Worker type (default, jobs, mail, events)")
+	flag.Parse()
+
+	log.Printf("Starting %s worker...", workerType)
+
+	// Register config first
+	providers.RegisterConfig()
+
+	// Register all service providers
+	providers.RegisterFormFieldValidators()
+	providers.RegisterDatabase()
+	providers.RegisterCache()
+	providers.RegisterMailer()
+	providers.RegisterQueue()
+	providers.RegisterJobDispatcher()
+	providers.RegisterMessageProcessor()
+	providers.RegisterEventDispatcher()
+	providers.RegisterRepository()
+	providers.RegisterServices() // Register service provider
+
+	// Initialize core systems
+	core.InitializeRegistry()
+	core.InitializeEventDispatcher()
+
+	// Register app-specific events
+	providers.RegisterAppEvents()
+
+	// Initialize email template engine
+	if err := providers.RegisterMailTemplateEngine(); err != nil {
+		log.Fatalf("Failed to initialize email template engine: %v", err)
+	}
+
+	// Set up the mail function for event dispatcher
+	core.SetSendMailFunc(core.SendMail)
+
+	// Set up facades with concrete implementations
+	facades.SetEventDispatcher(core.EventDispatcherServiceInstance)
+	facades.SetJobDispatcher(core.JobDispatcherServiceInstance)
+	facades.SetCache(core.CacheInstance)
+
+	// Register event listeners
+	providers.RegisterListeners()
+
+	// Register job processors
+	providers.RegisterJobProcessors()
+
+	providers.RunMigrations()
+
+	log.Println("All service providers registered successfully")
+
+	// Get worker configuration
+	workerConfig := config.GetWorkerConfig(workerType)
+	workerQueues := config.GetWorkerQueues(workerType)
+
+	log.Printf("Worker type: %s", workerType)
+	log.Printf("Assigned queues: %v", workerQueues)
+	log.Printf("Max jobs: %v", workerConfig["max_jobs"])
+	log.Printf("Memory limit: %v MB", workerConfig["memory_limit"])
+	log.Printf("Timeout: %v seconds", workerConfig["timeout"])
+	log.Printf("Sleep: %v seconds", workerConfig["sleep"])
+	log.Printf("Tries: %v", workerConfig["tries"])
+
+	// Start the worker with assigned queues
+	worker := core.NewQueueWorker(workerQueues)
+
+	log.Printf("Starting queue worker for %s with %d assigned queues", workerType, len(workerQueues))
+	worker.Start()
+}

@@ -1,23 +1,30 @@
 package main
 
 import (
-	"base_lara_go_project/app/core"
-	"base_lara_go_project/app/facades"
+	app_core "base_lara_go_project/app/core/app"
+	events_core "base_lara_go_project/app/core/events"
+	facades_core "base_lara_go_project/app/core/facades"
+	jobs_core "base_lara_go_project/app/core/jobs"
+	mail_core "base_lara_go_project/app/core/mail"
+	queue_core "base_lara_go_project/app/core/queue"
 	"base_lara_go_project/app/providers"
 	"base_lara_go_project/config"
+	"flag"
 	"log"
 )
 
 func main() {
-	log.Println("Starting worker...")
+	// Parse command line arguments for worker type
+	var workerType string
+	flag.StringVar(&workerType, "worker", "default", "Worker type (default, jobs, mail, events)")
+	flag.Parse()
 
-	// Register config first
-	providers.RegisterConfig()
+	log.Printf("Starting %s worker...", workerType)
 
 	// Register all service providers
 	providers.RegisterFormFieldValidators()
 	providers.RegisterDatabase()
-	providers.RegisterCache()
+	providers.RegisterCache(app_core.App)
 	providers.RegisterMailer()
 	providers.RegisterQueue()
 	providers.RegisterJobDispatcher()
@@ -27,8 +34,8 @@ func main() {
 	providers.RegisterServices() // Register service provider
 
 	// Initialize core systems
-	core.InitializeRegistry()
-	core.InitializeEventDispatcher()
+	app_core.InitializeRegistry()
+	events_core.InitializeEventDispatcher()
 
 	// Register app-specific events
 	providers.RegisterAppEvents()
@@ -39,12 +46,12 @@ func main() {
 	}
 
 	// Set up the mail function for event dispatcher
-	core.SetSendMailFunc(core.SendMail)
+	events_core.SetSendMailFunc(mail_core.SendMail)
 
 	// Set up facades with concrete implementations
-	facades.SetEventDispatcher(core.EventDispatcherServiceInstance)
-	facades.SetJobDispatcher(core.JobDispatcherServiceInstance)
-	facades.SetCache(core.CacheInstance)
+	facades_core.SetEventDispatcher(events_core.EventDispatcherServiceInstance)
+	facades_core.SetJobDispatcher(jobs_core.JobDispatcherServiceInstance)
+	facades_core.SetCache(facades_core.CacheInstance)
 
 	// Register event listeners
 	providers.RegisterListeners()
@@ -56,11 +63,36 @@ func main() {
 
 	log.Println("All service providers registered successfully")
 
-	// Start a worker for all enabled queues
+	// Get worker configuration
 	queueConfig := config.QueueConfig()
-	enabledQueues := queueConfig["enabled_queues"].([]string)
-	worker := core.NewQueueWorker(enabledQueues)
+	workers := queueConfig["workers"].(map[string]interface{})
+	workerConfig, ok := workers[workerType].(map[string]interface{})
+	if !ok {
+		workerConfig = workers["default"].(map[string]interface{})
+	}
+	workerQueuesIface := workerConfig["queues"].([]interface{})
+	workerQueues := make([]string, len(workerQueuesIface))
+	for i, q := range workerQueuesIface {
+		workerQueues[i] = q.(string)
+	}
 
-	log.Printf("Starting queue worker with %d enabled queues", len(enabledQueues))
+	log.Printf("Worker type: %s", workerType)
+	log.Printf("Assigned queues: %v", workerQueues)
+	log.Printf("Max jobs: %v", workerConfig["max_jobs"])
+	log.Printf("Memory limit: %v MB", workerConfig["memory_limit"])
+	log.Printf("Timeout: %v seconds", workerConfig["timeout"])
+	log.Printf("Sleep: %v seconds", workerConfig["sleep"])
+	log.Printf("Tries: %v", workerConfig["tries"])
+
+	// Start the worker with assigned queues
+	worker := queue_core.NewQueueWorker(
+		workerQueues,
+		queue_core.QueueServiceInstance,
+		jobs_core.JobDispatcherServiceInstance,
+		app_core.App.Get("message_processor").(app_core.MessageProcessorService),
+		workerConfig,
+	)
+
+	log.Printf("Starting queue worker for %s with %d assigned queues", workerType, len(workerQueues))
 	worker.Start()
 }

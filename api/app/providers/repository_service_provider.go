@@ -1,8 +1,10 @@
 package providers
 
 import (
-	"base_lara_go_project/app/facades"
+	facades_core "base_lara_go_project/app/core/facades"
 	"base_lara_go_project/app/repositories"
+
+	"gorm.io/gorm"
 )
 
 // RepositoryServiceProvider handles repository registration
@@ -16,8 +18,9 @@ func NewRepositoryServiceProvider() *RepositoryServiceProvider {
 // Register registers all repositories with their dependencies
 func (p *RepositoryServiceProvider) Register() {
 	// Get database and cache instances
-	db := facades.Database.GetDB()
-	cache := facades.CacheInstance
+	dbInterface := facades_core.Database.GetDB()
+	db := dbInterface.(*gorm.DB)
+	cache := facades_core.CacheInstance
 
 	// Register user repository
 	repositories.RegisterUserRepository(db, cache)
