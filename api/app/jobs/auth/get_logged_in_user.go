@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"base_lara_go_project/app/facades"
+	facades_core "base_lara_go_project/app/core/facades"
 )
 
 // GetLoggedInUserJob handles retrieving logged in user
@@ -12,5 +12,5 @@ type GetLoggedInUserJob struct {
 // Handle processes the get logged in user job
 func (j *GetLoggedInUserJob) Handle() (any, error) {
 	// Use service facade for Laravel-style access
-	return facades.GetUserWithRoles(j.UserID)
+	return facades_core.GetUserWithRoles(j.UserID)
 }
