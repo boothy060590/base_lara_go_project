@@ -1,7 +1,6 @@
 package processors
 
 import (
-	events_core "base_lara_go_project/app/core/events"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -32,16 +31,7 @@ func (e *EventJobProcessor) Process(jobData []byte) error {
 		return fmt.Errorf("invalid event name in job data")
 	}
 
-	eventPayload, ok := eventData["event"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid event payload in job data")
-	}
-
 	log.Printf("Processing event: %s", eventName)
-	event, err := events_core.CreateEvent(eventName, eventPayload)
-	if err != nil {
-		return fmt.Errorf("failed to create event: %v", err)
-	}
-
-	return events_core.EventDispatcherInstance.DispatchSync(event)
+	// TODO: Implement event processing using go_core event system
+	return nil
 }

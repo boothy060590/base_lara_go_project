@@ -1,9 +1,5 @@
 package auth
 
-import (
-	facades_core "base_lara_go_project/app/core/facades"
-)
-
 // GetLoggedInUserJob handles retrieving logged in user
 type GetLoggedInUserJob struct {
 	UserID uint `json:"user_id"`
@@ -11,6 +7,10 @@ type GetLoggedInUserJob struct {
 
 // Handle processes the get logged in user job
 func (j *GetLoggedInUserJob) Handle() (any, error) {
-	// Use service facade for Laravel-style access
-	return facades_core.GetUserWithRoles(j.UserID)
+	// TODO: Implement user retrieval using go_core services
+	// For now, return placeholder data
+	return map[string]interface{}{
+		"message": "Get logged in user job processed",
+		"user_id": j.UserID,
+	}, nil
 }

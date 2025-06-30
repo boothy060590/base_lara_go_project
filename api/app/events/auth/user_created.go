@@ -1,31 +1,21 @@
 package auth
 
 import (
-	app_core "base_lara_go_project/app/core/app"
-	events_core "base_lara_go_project/app/core/events"
+	app_core "base_lara_go_project/app/core/go_core"
 	"base_lara_go_project/app/data_objects/auth"
-	"encoding/json"
+	"time"
 )
 
 type UserCreated struct {
-	User auth.UserDTO
+	app_core.Event[auth.UserDTO]
 }
 
-func (e *UserCreated) GetUser() auth.UserDTO {
-	return e.User
-}
-
-func (e *UserCreated) GetEventName() string {
-	return "UserCreated"
-}
-
-func init() {
-	events_core.RegisterEventFactory("UserCreated", func(data map[string]interface{}) (app_core.EventInterface, error) {
-		userData, _ := json.Marshal(data["User"])
-		var dto auth.UserDTO
-		if err := json.Unmarshal(userData, &dto); err != nil {
-			return nil, err
-		}
-		return &UserCreated{User: dto}, nil
-	})
+func NewUserCreatedEvent(userData auth.UserDTO) *app_core.Event[auth.UserDTO] {
+	return &app_core.Event[auth.UserDTO]{
+		ID:        "user_created_" + time.Now().Format("20060102150405"),
+		Name:      "user.created",
+		Data:      userData,
+		Timestamp: time.Now(),
+		Source:    "auth_controller",
+	}
 }

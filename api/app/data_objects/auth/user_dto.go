@@ -1,8 +1,7 @@
 package auth
 
 import (
-	core "base_lara_go_project/app/core/dtos"
-	"base_lara_go_project/app/models/interfaces"
+	"base_lara_go_project/app/models"
 )
 
 type UserDTO struct {
@@ -17,16 +16,16 @@ type UserDTO struct {
 
 func (u UserDTO) GetID() uint { return u.ID }
 
-// FromModel implements BaseDTO interface
-func (u UserDTO) FromModel(model interface{}) core.BaseDTO {
-	if user, ok := model.(interfaces.UserInterface); ok {
+// FromModel creates a UserDTO from a model
+func (u UserDTO) FromModel(model interface{}) UserDTO {
+	if user, ok := model.(*models.User); ok {
 		return FromUser(user)
 	}
 	return u
 }
 
-// FromUser creates a UserDTO from a UserInterface
-func FromUser(user interfaces.UserInterface) UserDTO {
+// FromUser creates a UserDTO from a User
+func FromUser(user *models.User) UserDTO {
 	roles := []string{}
 	for _, r := range user.GetRoles() {
 		roles = append(roles, r.GetName())
@@ -42,6 +41,3 @@ func FromUser(user interfaces.UserInterface) UserDTO {
 		Roles:         roles,
 	}
 }
-
-// Ensure UserDTO implements BaseDTO
-var _ core.BaseDTO = (*UserDTO)(nil)

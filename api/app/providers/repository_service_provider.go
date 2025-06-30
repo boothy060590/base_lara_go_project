@@ -1,44 +1,168 @@
 package providers
 
 import (
-	facades_core "base_lara_go_project/app/core/facades"
+	app_core "base_lara_go_project/app/core/go_core"
+	laravel_providers "base_lara_go_project/app/core/laravel_core/providers"
+	"base_lara_go_project/app/models"
 	"base_lara_go_project/app/repositories"
+	"log"
+	"time"
 
 	"gorm.io/gorm"
 )
 
-// RepositoryServiceProvider handles repository registration
-type RepositoryServiceProvider struct{}
-
-// NewRepositoryServiceProvider creates a new repository service provider
-func NewRepositoryServiceProvider() *RepositoryServiceProvider {
-	return &RepositoryServiceProvider{}
+// RepositoryServiceProvider registers application repositories
+type RepositoryServiceProvider struct {
+	laravel_providers.BaseServiceProvider
 }
 
-// Register registers all repositories with their dependencies
-func (p *RepositoryServiceProvider) Register() {
-	// Get database and cache instances
-	dbInterface := facades_core.Database.GetDB()
-	db := dbInterface.(*gorm.DB)
-	cache := facades_core.CacheInstance
+// Register registers all application repositories
+func (p *RepositoryServiceProvider) Register(container *app_core.Container) error {
+	// Register repositories with dependency injection
+	container.Singleton("repository.user", func() (any, error) {
+		// Get database instance from container
+		dbInstance, err := container.Resolve("gorm.db")
+		if err != nil {
+			log.Printf("Database not found, creating repository with nil database: %v", err)
+			// Create a temporary cache for now
+			cache := app_core.NewLocalCache[models.User]()
+			return repositories.NewUserRepository(nil, cache), nil
+		}
 
-	// Register user repository
-	repositories.RegisterUserRepository(db, cache)
-	// Register other repositories
-	repositories.RegisterCategoryRepository(db)
-	repositories.RegisterServiceRepository(db)
-	repositories.RegisterRoleRepository(db)
-	repositories.RegisterPermissionRepository(db)
+		db := dbInstance.(*gorm.DB)
+
+		// Get or create cache for users
+		var cache app_core.Cache[models.User]
+		cacheInstance, err := container.Resolve("cache.user")
+		if err != nil {
+			log.Printf("User cache not found, creating local cache: %v", err)
+			cache = app_core.NewLocalCache[models.User]()
+		} else {
+			cache = cacheInstance.(app_core.Cache[models.User])
+		}
+
+		return repositories.NewUserRepository(db, cache), nil
+	})
+
+	container.Singleton("repository.role", func() (any, error) {
+		dbInstance, err := container.Resolve("gorm.db")
+		if err != nil {
+			log.Printf("Database not found, creating repository with nil database: %v", err)
+			cache := app_core.NewLocalCache[models.Role]()
+			return repositories.NewRoleRepository(nil, cache), nil
+		}
+
+		db := dbInstance.(*gorm.DB)
+
+		var cache app_core.Cache[models.Role]
+		cacheInstance, err := container.Resolve("cache.role")
+		if err != nil {
+			cache = app_core.NewLocalCache[models.Role]()
+		} else {
+			cache = cacheInstance.(app_core.Cache[models.Role])
+		}
+
+		return repositories.NewRoleRepository(db, cache), nil
+	})
+
+	container.Singleton("repository.permission", func() (any, error) {
+		dbInstance, err := container.Resolve("gorm.db")
+		if err != nil {
+			log.Printf("Database not found, creating repository with nil database: %v", err)
+			cache := app_core.NewLocalCache[models.Permission]()
+			return repositories.NewPermissionRepository(nil, cache), nil
+		}
+
+		db := dbInstance.(*gorm.DB)
+
+		var cache app_core.Cache[models.Permission]
+		cacheInstance, err := container.Resolve("cache.permission")
+		if err != nil {
+			cache = app_core.NewLocalCache[models.Permission]()
+		} else {
+			cache = cacheInstance.(app_core.Cache[models.Permission])
+		}
+
+		return repositories.NewPermissionRepository(db, cache), nil
+	})
+
+	container.Singleton("repository.category", func() (any, error) {
+		dbInstance, err := container.Resolve("gorm.db")
+		if err != nil {
+			log.Printf("Database not found, creating repository with nil database: %v", err)
+			cache := app_core.NewLocalCache[models.Category]()
+			return repositories.NewCategoryRepository(nil, cache), nil
+		}
+
+		db := dbInstance.(*gorm.DB)
+
+		var cache app_core.Cache[models.Category]
+		cacheInstance, err := container.Resolve("cache.category")
+		if err != nil {
+			cache = app_core.NewLocalCache[models.Category]()
+		} else {
+			cache = cacheInstance.(app_core.Cache[models.Category])
+		}
+
+		return repositories.NewCategoryRepository(db, cache), nil
+	})
+
+	container.Singleton("repository.service", func() (any, error) {
+		dbInstance, err := container.Resolve("gorm.db")
+		if err != nil {
+			log.Printf("Database not found, creating repository with nil database: %v", err)
+			cache := app_core.NewLocalCache[models.Service]()
+			config := app_core.ModelConfig{
+				TableName: "services",
+				Traits: app_core.ModelTraits{
+					Cacheable:   true,
+					SoftDeletes: true,
+					Timestamps:  true,
+				},
+				CacheTTL:    30 * time.Minute,
+				CachePrefix: "service",
+			}
+			return app_core.NewBaseModel[models.Service](nil, cache, config), nil
+		}
+
+		db := dbInstance.(*gorm.DB)
+
+		var cache app_core.Cache[models.Service]
+		cacheInstance, err := container.Resolve("cache.service")
+		if err != nil {
+			cache = app_core.NewLocalCache[models.Service]()
+		} else {
+			cache = cacheInstance.(app_core.Cache[models.Service])
+		}
+
+		config := app_core.ModelConfig{
+			TableName: "services",
+			Traits: app_core.ModelTraits{
+				Cacheable:   true,
+				SoftDeletes: true,
+				Timestamps:  true,
+			},
+			CacheTTL:    30 * time.Minute,
+			CachePrefix: "service",
+		}
+		return app_core.NewBaseModel[models.Service](db, cache, config), nil
+	})
+
+	return nil
 }
 
-// Boot performs any bootstrapping after registration
-func (p *RepositoryServiceProvider) Boot() {
-	// Any bootstrapping logic can go here
+// Boot boots the repository service provider
+func (p *RepositoryServiceProvider) Boot(container *app_core.Container) error {
+	// TODO: Inject database instances into repositories if they were created with nil
+	return nil
 }
 
-// RegisterRepository registers the repository service provider
-func RegisterRepository() {
-	provider := NewRepositoryServiceProvider()
-	provider.Register()
-	provider.Boot()
+// Provides returns the services this provider provides
+func (p *RepositoryServiceProvider) Provides() []string {
+	return []string{"repositories"}
+}
+
+// When returns the conditions when this provider should be loaded
+func (p *RepositoryServiceProvider) When() []string {
+	return []string{}
 }

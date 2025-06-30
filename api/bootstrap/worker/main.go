@@ -1,12 +1,8 @@
 package main
 
 import (
-	app_core "base_lara_go_project/app/core/app"
-	events_core "base_lara_go_project/app/core/events"
-	facades_core "base_lara_go_project/app/core/facades"
-	jobs_core "base_lara_go_project/app/core/jobs"
-	mail_core "base_lara_go_project/app/core/mail"
-	queue_core "base_lara_go_project/app/core/queue"
+	app_core "base_lara_go_project/app/core/go_core"
+	laravel_providers "base_lara_go_project/app/core/laravel_core/providers"
 	"base_lara_go_project/app/providers"
 	"base_lara_go_project/config"
 	"flag"
@@ -21,47 +17,52 @@ func main() {
 
 	log.Printf("Starting %s worker...", workerType)
 
-	// Register all service providers
-	providers.RegisterFormFieldValidators()
-	providers.RegisterDatabase()
-	providers.RegisterCache(app_core.App)
-	providers.RegisterMailer()
-	providers.RegisterQueue()
-	providers.RegisterJobDispatcher()
-	providers.RegisterMessageProcessor()
-	providers.RegisterEventDispatcher()
-	providers.RegisterRepository()
-	providers.RegisterServices() // Register service provider
+	// Create container instance
+	container := app_core.NewContainer()
 
-	// Initialize core systems
-	app_core.InitializeRegistry()
-	events_core.InitializeEventDispatcher()
-
-	// Register app-specific events
-	providers.RegisterAppEvents()
-
-	// Initialize email template engine
-	if err := providers.RegisterMailTemplateEngine(); err != nil {
-		log.Fatalf("Failed to initialize email template engine: %v", err)
+	// Register core services automatically
+	coreProvider := &laravel_providers.CoreServiceProvider{}
+	if err := coreProvider.Register(container); err != nil {
+		log.Fatalf("Failed to register core services: %v", err)
 	}
 
-	// Set up the mail function for event dispatcher
-	events_core.SetSendMailFunc(mail_core.SendMail)
+	// Register application providers
+	appProviders := []laravel_providers.ServiceProvider{
+		&providers.AppServiceProvider{},
+		&providers.RepositoryServiceProvider{},
+		&providers.ListenerServiceProvider{},
+		&providers.RouterServiceProvider{},
+		&laravel_providers.ValidationServiceProvider{},
+	}
 
-	// Set up facades with concrete implementations
-	facades_core.SetEventDispatcher(events_core.EventDispatcherServiceInstance)
-	facades_core.SetJobDispatcher(jobs_core.JobDispatcherServiceInstance)
-	facades_core.SetCache(facades_core.CacheInstance)
+	for _, provider := range appProviders {
+		if err := provider.Register(container); err != nil {
+			log.Printf("Warning: Failed to register provider %T: %v", provider, err)
+		}
+	}
 
-	// Register event listeners
-	providers.RegisterListeners()
+	// Boot all providers
+	if err := coreProvider.Boot(container); err != nil {
+		log.Fatalf("Failed to boot core services: %v", err)
+	}
 
-	// Register job processors
-	providers.RegisterJobProcessors()
+	for _, provider := range appProviders {
+		if err := provider.Boot(container); err != nil {
+			log.Printf("Warning: Failed to boot provider %T: %v", provider, err)
+		}
+	}
 
-	providers.RunMigrations()
+	// Run database migrations if migration provider exists
+	migrationProvider := &laravel_providers.MigrationServiceProvider{}
+	if err := migrationProvider.Register(container); err != nil {
+		log.Printf("Warning: Failed to register migration provider: %v", err)
+	} else {
+		if err := migrationProvider.Boot(container); err != nil {
+			log.Printf("Warning: Failed to run migrations: %v", err)
+		}
+	}
 
-	log.Println("All service providers registered successfully")
+	log.Println("All service providers registered and booted successfully")
 
 	// Get worker configuration
 	queueConfig := config.QueueConfig()
@@ -84,15 +85,10 @@ func main() {
 	log.Printf("Sleep: %v seconds", workerConfig["sleep"])
 	log.Printf("Tries: %v", workerConfig["tries"])
 
-	// Start the worker with assigned queues
-	worker := queue_core.NewQueueWorker(
-		workerQueues,
-		queue_core.QueueServiceInstance,
-		jobs_core.JobDispatcherServiceInstance,
-		app_core.App.Get("message_processor").(app_core.MessageProcessorService),
-		workerConfig,
-	)
-
+	// TODO: Implement proper queue worker with new go_core structure
+	log.Printf("Queue worker not yet implemented with new core structure")
 	log.Printf("Starting queue worker for %s with %d assigned queues", workerType, len(workerQueues))
-	worker.Start()
+
+	// Keep the process running for now
+	select {}
 }

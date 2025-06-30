@@ -1,7 +1,7 @@
 package migrations
 
 import (
-	db "base_lara_go_project/app/models/db"
+	db "base_lara_go_project/app/models"
 
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"

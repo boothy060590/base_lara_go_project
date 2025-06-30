@@ -1,7 +1,43 @@
 package providers
 
-// RegisterListeners registers all event listeners
-func RegisterListeners() {
-	// Event registrations are now handled in RegisterAppEvents()
-	// This function is kept for future listener-specific logic if needed
+import (
+	app_core "base_lara_go_project/app/core/go_core"
+	laravel_providers "base_lara_go_project/app/core/laravel_core/providers"
+	"base_lara_go_project/app/listeners"
+)
+
+// ListenerServiceProvider registers application listeners
+type ListenerServiceProvider struct {
+	laravel_providers.BaseServiceProvider
+}
+
+// Register registers all application listeners
+func (p *ListenerServiceProvider) Register(container *app_core.Container) error {
+	// Register listeners
+	container.Singleton("listener.send_email_confirmation", func() (any, error) {
+		return &listeners.SendEmailConfirmation{}, nil
+	})
+
+	// TODO: Register more listeners as needed
+	// container.Singleton("listener.user_registered", func() (any, error) {
+	//     return &listeners.UserRegistered{}, nil
+	// })
+
+	return nil
+}
+
+// Boot boots the listener service provider
+func (p *ListenerServiceProvider) Boot(container *app_core.Container) error {
+	// TODO: Set up event-listener mappings
+	return nil
+}
+
+// Provides returns the services this provider provides
+func (p *ListenerServiceProvider) Provides() []string {
+	return []string{"listeners"}
+}
+
+// When returns the conditions when this provider should be loaded
+func (p *ListenerServiceProvider) When() []string {
+	return []string{}
 }
