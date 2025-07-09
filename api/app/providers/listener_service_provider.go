@@ -25,19 +25,3 @@ func (p *ListenerServiceProvider) Register(container *app_core.Container) error 
 
 	return nil
 }
-
-// Boot boots the listener service provider
-func (p *ListenerServiceProvider) Boot(container *app_core.Container) error {
-	// TODO: Set up event-listener mappings
-	return nil
-}
-
-// Provides returns the services this provider provides
-func (p *ListenerServiceProvider) Provides() []string {
-	return []string{"listeners"}
-}
-
-// When returns the conditions when this provider should be loaded
-func (p *ListenerServiceProvider) When() []string {
-	return []string{}
-}

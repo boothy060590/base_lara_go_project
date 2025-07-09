@@ -21,6 +21,7 @@ func (p *AppServiceProvider) Register(container *app_core.Container) error {
 
 	// Register application-specific providers
 	appProviders := []laravel_providers.ServiceProvider{
+		&laravel_providers.GoroutineServiceProvider{}, // Add goroutine optimization
 		&ListenerServiceProvider{},
 		&RepositoryServiceProvider{},
 		&RouterServiceProvider{},
@@ -51,6 +52,7 @@ func (p *AppServiceProvider) Boot(container *app_core.Container) error {
 
 	// Boot application-specific providers
 	appProviders := []laravel_providers.ServiceProvider{
+		&laravel_providers.GoroutineServiceProvider{}, // Add goroutine optimization
 		&ListenerServiceProvider{},
 		&RepositoryServiceProvider{},
 		&RouterServiceProvider{},
