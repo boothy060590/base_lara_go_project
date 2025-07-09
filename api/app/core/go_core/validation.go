@@ -38,30 +38,54 @@ func (r *Rule) GetMessage() string {
 	return r.Message
 }
 
-// Validator provides Laravel-style validation
+// Validator provides Laravel-style validation with performance optimizations
 type Validator[T any] struct {
 	rules    map[string][]ValidationRule
 	messages map[string]string
 	data     T
 	dataMap  map[string]any
+	// Performance optimizations (safe for validation operations)
+	atomicCounter     *AtomicCounter
+	rulePool          *ObjectPool[Rule]
+	performanceFacade *PerformanceFacade
 }
 
-// NewValidator creates a new validator for type T
+// NewValidator creates a new validator for type T with performance optimizations
 func NewValidator[T any](data T) *Validator[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
+	// Create object pool for rule objects (safe - no database state)
+	rulePool := NewObjectPool[Rule](100,
+		func() Rule { return Rule{} },
+		func(rule Rule) Rule { return Rule{} },
+	)
+
 	validator := &Validator[T]{
-		rules:    make(map[string][]ValidationRule),
-		messages: make(map[string]string),
-		data:     data,
+		rules:             make(map[string][]ValidationRule),
+		messages:          make(map[string]string),
+		data:              data,
+		atomicCounter:     atomicCounter,
+		rulePool:          rulePool,
+		performanceFacade: performanceFacade,
 	}
 	validator.dataMap = validator.structToMap(data)
 	return validator
 }
 
-// Rules sets the validation rules
+// Rules sets the validation rules with performance tracking and atomic counter
 func (v *Validator[T]) Rules(rules map[string]any) *Validator[T] {
-	for field, rule := range rules {
-		v.rules[field] = v.parseRules(rule)
-	}
+	// Track operation count atomically
+	v.atomicCounter.Increment()
+
+	v.performanceFacade.Track("validation.rules", func() error {
+		for field, rule := range rules {
+			v.rules[field] = v.parseRules(rule)
+		}
+		return nil
+	})
+
 	return v
 }
 
@@ -71,27 +95,36 @@ func (v *Validator[T]) Messages(messages map[string]string) *Validator[T] {
 	return v
 }
 
-// Validate validates the data against the rules
+// Validate validates the data against the rules with performance tracking and atomic counter
 func (v *Validator[T]) Validate() (bool, map[string][]string) {
-	errors := make(map[string][]string)
+	// Track operation count atomically
+	v.atomicCounter.Increment()
 
-	for field, rules := range v.rules {
-		value := v.dataMap[field]
+	var errors map[string][]string
 
-		for _, rule := range rules {
-			if err := rule.Validate(value, v.dataMap); err != nil {
-				message := rule.GetMessage()
-				if message == "" {
-					message = err.Error()
+	v.performanceFacade.Track("validation.validate", func() error {
+		errors = make(map[string][]string)
+
+		for field, rules := range v.rules {
+			value := v.dataMap[field]
+
+			for _, rule := range rules {
+				if err := rule.Validate(value, v.dataMap); err != nil {
+					message := rule.GetMessage()
+					if message == "" {
+						message = err.Error()
+					}
+
+					if errors[field] == nil {
+						errors[field] = []string{}
+					}
+					errors[field] = append(errors[field], message)
 				}
-
-				if errors[field] == nil {
-					errors[field] = []string{}
-				}
-				errors[field] = append(errors[field], message)
 			}
 		}
-	}
+
+		return nil
+	})
 
 	return len(errors) == 0, errors
 }
@@ -252,6 +285,29 @@ func (v *Validator[T]) Validated() map[string]any {
 		}
 	}
 	return result
+}
+
+// GetPerformanceStats returns validation performance statistics
+func (v *Validator[T]) GetPerformanceStats() map[string]interface{} {
+	stats := v.performanceFacade.GetStats()
+
+	// Add validation-specific stats
+	stats["validation"] = map[string]interface{}{
+		"operations_count": v.atomicCounter.Get(),
+		"rule_pool_size":   len(v.rulePool.pool),
+		"rules_count":      len(v.rules),
+	}
+
+	return stats
+}
+
+// GetOptimizationStats returns validation optimization statistics
+func (v *Validator[T]) GetOptimizationStats() map[string]interface{} {
+	return map[string]interface{}{
+		"atomic_operations": v.atomicCounter.Get(),
+		"rule_pool_usage":   len(v.rulePool.pool),
+		"rules_count":       len(v.rules),
+	}
 }
 
 // getNestedValue retrieves a nested value using dot notation (e.g., "data.jobs.0")

@@ -36,34 +36,65 @@ type EventDispatcher[T any] interface {
 	HasListeners(eventName string) bool
 	GetListenerCount(eventName string) int
 	WithContext(ctx context.Context) EventDispatcher[T]
+
+	// Performance operations
+	GetPerformanceStats() map[string]interface{}
+	GetOptimizationStats() map[string]interface{}
 }
 
-// EventBus implements EventDispatcher[T] with in-memory storage
+// EventBus implements EventDispatcher[T] with in-memory storage and performance optimizations
 type EventBus[T any] struct {
 	listeners map[string][]EventListener[T]
 	mu        sync.RWMutex
 	ctx       context.Context
+	// Performance optimizations (safe for event operations)
+	atomicCounter     *AtomicCounter
+	eventPool         *ObjectPool[Event[T]]
+	performanceFacade *PerformanceFacade
 }
 
-// NewEventBus creates a new event bus instance
+// NewEventBus creates a new event bus instance with performance optimizations
 func NewEventBus[T any]() EventDispatcher[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
+	// Create object pool for event objects (safe - no database state)
+	eventPool := NewObjectPool[Event[T]](100,
+		func() Event[T] { return Event[T]{} },
+		func(event Event[T]) Event[T] { return Event[T]{} },
+	)
+
 	return &EventBus[T]{
-		listeners: make(map[string][]EventListener[T]),
-		ctx:       context.Background(),
+		listeners:         make(map[string][]EventListener[T]),
+		ctx:               context.Background(),
+		atomicCounter:     atomicCounter,
+		eventPool:         eventPool,
+		performanceFacade: performanceFacade,
 	}
 }
 
-// Dispatch dispatches an event synchronously
+// Dispatch dispatches an event synchronously with performance tracking and atomic counter
 func (e *EventBus[T]) Dispatch(event *Event[T]) error {
-	return e.Handle(event)
+	// Track operation count atomically
+	e.atomicCounter.Increment()
+
+	return e.performanceFacade.Track("event.dispatch", func() error {
+		return e.Handle(event)
+	})
 }
 
-// DispatchAsync dispatches an event asynchronously
+// DispatchAsync dispatches an event asynchronously with performance tracking and atomic counter
 func (e *EventBus[T]) DispatchAsync(event *Event[T]) error {
-	go func() {
-		_ = e.Handle(event)
-	}()
-	return nil
+	// Track operation count atomically
+	e.atomicCounter.Increment()
+
+	return e.performanceFacade.Track("event.dispatch_async", func() error {
+		go func() {
+			_ = e.Handle(event)
+		}()
+		return nil
+	})
 }
 
 // Listen registers an event listener
@@ -100,31 +131,33 @@ func (e *EventBus[T]) RemoveListener(eventName string, listener EventListener[T]
 	return nil
 }
 
-// Handle processes an event by calling all registered listeners
+// Handle processes an event by calling all registered listeners with performance tracking
 func (e *EventBus[T]) Handle(event *Event[T]) error {
-	e.mu.RLock()
-	listeners, exists := e.listeners[event.Name]
-	e.mu.RUnlock()
+	return e.performanceFacade.Track("event.handle", func() error {
+		e.mu.RLock()
+		listeners, exists := e.listeners[event.Name]
+		e.mu.RUnlock()
 
-	if !exists {
-		return nil // No listeners for this event
-	}
-
-	// Call all listeners
-	var errors []error
-	for _, listener := range listeners {
-		err := listener(e.ctx, event)
-		if err != nil {
-			errors = append(errors, err)
+		if !exists {
+			return nil // No listeners for this event
 		}
-	}
 
-	// Return first error if any
-	if len(errors) > 0 {
-		return fmt.Errorf("event handling errors: %v", errors)
-	}
+		// Call all listeners
+		var errors []error
+		for _, listener := range listeners {
+			err := listener(e.ctx, event)
+			if err != nil {
+				errors = append(errors, err)
+			}
+		}
 
-	return nil
+		// Return first error if any
+		if len(errors) > 0 {
+			return fmt.Errorf("event handling errors: %v", errors)
+		}
+
+		return nil
+	})
 }
 
 // HasListeners checks if there are listeners for an event
@@ -149,11 +182,37 @@ func (e *EventBus[T]) GetListenerCount(eventName string) int {
 	return len(listeners)
 }
 
+// GetPerformanceStats returns event bus performance statistics
+func (e *EventBus[T]) GetPerformanceStats() map[string]interface{} {
+	stats := e.performanceFacade.GetStats()
+
+	// Add event-specific stats
+	stats["events"] = map[string]interface{}{
+		"operations_count": e.atomicCounter.Get(),
+		"event_pool_size":  len(e.eventPool.pool),
+		"listener_count":   len(e.listeners),
+	}
+
+	return stats
+}
+
+// GetOptimizationStats returns event bus optimization statistics
+func (e *EventBus[T]) GetOptimizationStats() map[string]interface{} {
+	return map[string]interface{}{
+		"atomic_operations": e.atomicCounter.Get(),
+		"event_pool_usage":  len(e.eventPool.pool),
+		"listener_count":    len(e.listeners),
+	}
+}
+
 // WithContext returns an event dispatcher with context
 func (e *EventBus[T]) WithContext(ctx context.Context) EventDispatcher[T] {
 	return &EventBus[T]{
-		listeners: e.listeners,
-		ctx:       ctx,
+		listeners:         e.listeners,
+		ctx:               ctx,
+		atomicCounter:     e.atomicCounter,
+		eventPool:         e.eventPool,
+		performanceFacade: e.performanceFacade,
 	}
 }
 

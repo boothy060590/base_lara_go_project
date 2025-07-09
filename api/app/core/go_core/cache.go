@@ -32,49 +32,91 @@ type Cache[T any] interface {
 	// Utility operations
 	Flush() error
 	WithContext(ctx context.Context) Cache[T]
+
+	// Performance operations
+	GetPerformanceStats() map[string]interface{}
+	GetOptimizationStats() map[string]interface{}
 }
 
-// redisCache implements Cache[T] with Redis
+// redisCache implements Cache[T] with Redis and performance optimizations
 type redisCache[T any] struct {
 	client *redis.Client
 	ctx    context.Context
+	// Performance optimizations (safe for cache operations)
+	atomicCounter     *AtomicCounter
+	jsonEncoderPool   *ObjectPool[json.Encoder]
+	jsonDecoderPool   *ObjectPool[json.Decoder]
+	performanceFacade *PerformanceFacade
 }
 
-// NewRedisCache creates a new Redis cache instance
+// NewRedisCache creates a new Redis cache instance with performance optimizations
 func NewRedisCache[T any](client *redis.Client) Cache[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
+	// Create object pools for JSON operations (safe - no database state)
+	jsonEncoderPool := NewObjectPool[json.Encoder](50,
+		func() json.Encoder { return *json.NewEncoder(nil) },
+		func(encoder json.Encoder) json.Encoder { return *json.NewEncoder(nil) },
+	)
+
+	jsonDecoderPool := NewObjectPool[json.Decoder](50,
+		func() json.Decoder { return *json.NewDecoder(nil) },
+		func(decoder json.Decoder) json.Decoder { return *json.NewDecoder(nil) },
+	)
+
 	return &redisCache[T]{
-		client: client,
-		ctx:    context.Background(),
+		client:            client,
+		ctx:               context.Background(),
+		atomicCounter:     atomicCounter,
+		jsonEncoderPool:   jsonEncoderPool,
+		jsonDecoderPool:   jsonDecoderPool,
+		performanceFacade: performanceFacade,
 	}
 }
 
-// Get retrieves a value from cache
+// Get retrieves a value from cache with performance tracking and atomic counter
 func (c *redisCache[T]) Get(key string) (*T, error) {
-	data, err := c.client.Get(c.ctx, key).Bytes()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil // Key not found
+	// Track operation count atomically
+	c.atomicCounter.Increment()
+
+	var result *T
+	err := c.performanceFacade.Track("cache.get", func() error {
+		data, err := c.client.Get(c.ctx, key).Bytes()
+		if err != nil {
+			if err == redis.Nil {
+				return nil // Key not found
+			}
+			return err
 		}
-		return nil, err
-	}
 
-	var value T
-	err = json.Unmarshal(data, &value)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cache value: %w", err)
-	}
+		var value T
+		err = json.Unmarshal(data, &value)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal cache value: %w", err)
+		}
 
-	return &value, nil
+		result = &value
+		return nil
+	})
+
+	return result, err
 }
 
-// Set stores a value in cache
+// Set stores a value in cache with performance tracking and atomic counter
 func (c *redisCache[T]) Set(key string, value *T, ttl time.Duration) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cache value: %w", err)
-	}
+	// Track operation count atomically
+	c.atomicCounter.Increment()
 
-	return c.client.Set(c.ctx, key, data, ttl).Err()
+	return c.performanceFacade.Track("cache.set", func() error {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("failed to marshal cache value: %w", err)
+		}
+
+		return c.client.Set(c.ctx, key, data, ttl).Err()
+	})
 }
 
 // Delete removes a value from cache
@@ -216,19 +258,49 @@ func (c *redisCache[T]) Flush() error {
 	return c.client.FlushDB(c.ctx).Err()
 }
 
-// WithContext returns a cache with context
-func (c *redisCache[T]) WithContext(ctx context.Context) Cache[T] {
-	return &redisCache[T]{
-		client: c.client,
-		ctx:    ctx,
+// GetPerformanceStats returns cache performance statistics
+func (c *redisCache[T]) GetPerformanceStats() map[string]interface{} {
+	stats := c.performanceFacade.GetStats()
+
+	// Add cache-specific stats
+	stats["cache"] = map[string]interface{}{
+		"operations_count":       c.atomicCounter.Get(),
+		"json_encoder_pool_size": len(c.jsonEncoderPool.pool),
+		"json_decoder_pool_size": len(c.jsonDecoderPool.pool),
+	}
+
+	return stats
+}
+
+// GetOptimizationStats returns cache optimization statistics
+func (c *redisCache[T]) GetOptimizationStats() map[string]interface{} {
+	return map[string]interface{}{
+		"atomic_operations":       c.atomicCounter.Get(),
+		"json_encoder_pool_usage": len(c.jsonEncoderPool.pool),
+		"json_decoder_pool_usage": len(c.jsonDecoderPool.pool),
 	}
 }
 
-// localCache implements Cache[T] with in-memory storage
+// WithContext returns a cache with context
+func (c *redisCache[T]) WithContext(ctx context.Context) Cache[T] {
+	return &redisCache[T]{
+		client:            c.client,
+		ctx:               ctx,
+		atomicCounter:     c.atomicCounter,
+		jsonEncoderPool:   c.jsonEncoderPool,
+		jsonDecoderPool:   c.jsonDecoderPool,
+		performanceFacade: c.performanceFacade,
+	}
+}
+
+// localCache implements Cache[T] with in-memory storage and performance optimizations
 type localCache[T any] struct {
 	data map[string]cacheItem[T]
 	ctx  context.Context
 	mu   sync.RWMutex
+	// Performance optimizations (safe for cache operations)
+	atomicCounter     *AtomicCounter
+	performanceFacade *PerformanceFacade
 }
 
 type cacheItem[T any] struct {
@@ -238,9 +310,15 @@ type cacheItem[T any] struct {
 
 // NewLocalCache creates a new local cache instance
 func NewLocalCache[T any]() Cache[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
 	return &localCache[T]{
-		data: make(map[string]cacheItem[T]),
-		ctx:  context.Background(),
+		data:              make(map[string]cacheItem[T]),
+		ctx:               context.Background(),
+		atomicCounter:     atomicCounter,
+		performanceFacade: performanceFacade,
 	}
 }
 
@@ -419,10 +497,33 @@ func (c *localCache[T]) Flush() error {
 	return nil
 }
 
+// GetPerformanceStats returns local cache performance statistics
+func (c *localCache[T]) GetPerformanceStats() map[string]interface{} {
+	stats := c.performanceFacade.GetStats()
+
+	// Add cache-specific stats
+	stats["cache"] = map[string]interface{}{
+		"operations_count": c.atomicCounter.Get(),
+		"cache_size":       len(c.data),
+	}
+
+	return stats
+}
+
+// GetOptimizationStats returns local cache optimization statistics
+func (c *localCache[T]) GetOptimizationStats() map[string]interface{} {
+	return map[string]interface{}{
+		"atomic_operations": c.atomicCounter.Get(),
+		"cache_size":        len(c.data),
+	}
+}
+
 // WithContext returns a cache with context
 func (c *localCache[T]) WithContext(ctx context.Context) Cache[T] {
 	return &localCache[T]{
-		data: c.data,
-		ctx:  ctx,
+		data:              c.data,
+		ctx:               ctx,
+		atomicCounter:     c.atomicCounter,
+		performanceFacade: c.performanceFacade,
 	}
 }

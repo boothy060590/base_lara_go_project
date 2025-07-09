@@ -74,7 +74,7 @@ type MailTemplate[T any] interface {
 	HasTemplate(name string) bool
 }
 
-// smtpMailer implements Mailer[T] with SMTP
+// smtpMailer implements Mailer[T] with SMTP and performance optimizations
 type smtpMailer[T any] struct {
 	host     string
 	port     int
@@ -82,124 +82,172 @@ type smtpMailer[T any] struct {
 	password string
 	from     string
 	ctx      context.Context
+	// Performance optimizations (safe for mail operations)
+	atomicCounter     *AtomicCounter
+	emailPool         *ObjectPool[Email[T]]
+	performanceFacade *PerformanceFacade
 }
 
-// NewSMTPMailer creates a new SMTP mailer instance
+// NewSMTPMailer creates a new SMTP mailer instance with performance optimizations
 func NewSMTPMailer[T any](host string, port int, username, password, from string) Mailer[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
+	// Create object pool for email objects (safe - no database state)
+	emailPool := NewObjectPool[Email[T]](100,
+		func() Email[T] { return Email[T]{} },
+		func(email Email[T]) Email[T] { return Email[T]{} },
+	)
+
 	return &smtpMailer[T]{
-		host:     host,
-		port:     port,
-		username: username,
-		password: password,
-		from:     from,
-		ctx:      context.Background(),
+		host:              host,
+		port:              port,
+		username:          username,
+		password:          password,
+		from:              from,
+		ctx:               context.Background(),
+		atomicCounter:     atomicCounter,
+		emailPool:         emailPool,
+		performanceFacade: performanceFacade,
 	}
 }
 
-// Send sends an email synchronously
+// Send sends an email synchronously with performance tracking and atomic counter
 func (m *smtpMailer[T]) Send(email *Email[T]) error {
-	// Validate email
-	err := m.Validate(email)
-	if err != nil {
-		return err
-	}
+	// Track operation count atomically
+	m.atomicCounter.Increment()
 
-	// Set default from address if not provided
-	if email.From == "" {
-		email.From = m.from
-	}
-
-	// Build message
-	message, err := m.buildMessage(email)
-	if err != nil {
-		return err
-	}
-
-	// Send email
-	err = m.sendMessage(email.To, message)
-	if err != nil {
-		email.Status = EmailStatusFailed
-		email.Error = err.Error()
-		return err
-	}
-
-	// Update status
-	now := time.Now()
-	email.SentAt = &now
-	email.Status = EmailStatusSent
-
-	return nil
-}
-
-// SendAsync sends an email asynchronously
-func (m *smtpMailer[T]) SendAsync(email *Email[T]) error {
-	go func() {
-		_ = m.Send(email)
-	}()
-	return nil
-}
-
-// SendMany sends multiple emails
-func (m *smtpMailer[T]) SendMany(emails []*Email[T]) error {
-	for _, email := range emails {
-		err := m.Send(email)
+	return m.performanceFacade.Track("mail.send", func() error {
+		// Validate email
+		err := m.Validate(email)
 		if err != nil {
 			return err
 		}
-	}
-	return nil
+
+		// Set default from address if not provided
+		if email.From == "" {
+			email.From = m.from
+		}
+
+		// Build message
+		message, err := m.buildMessage(email)
+		if err != nil {
+			return err
+		}
+
+		// Send email
+		err = m.sendMessage(email.To, message)
+		if err != nil {
+			email.Status = EmailStatusFailed
+			email.Error = err.Error()
+			return err
+		}
+
+		// Update status
+		now := time.Now()
+		email.SentAt = &now
+		email.Status = EmailStatusSent
+
+		return nil
+	})
 }
 
-// SendTemplate sends an email using a template
+// SendAsync sends an email asynchronously with performance tracking and atomic counter
+func (m *smtpMailer[T]) SendAsync(email *Email[T]) error {
+	// Track operation count atomically
+	m.atomicCounter.Increment()
+
+	return m.performanceFacade.Track("mail.send_async", func() error {
+		go func() {
+			_ = m.Send(email)
+		}()
+		return nil
+	})
+}
+
+// SendMany sends multiple emails with performance tracking and atomic counter
+func (m *smtpMailer[T]) SendMany(emails []*Email[T]) error {
+	// Track operation count atomically
+	m.atomicCounter.Increment()
+
+	return m.performanceFacade.Track("mail.send_many", func() error {
+		for _, email := range emails {
+			err := m.Send(email)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// SendTemplate sends an email using a template with performance tracking and atomic counter
 func (m *smtpMailer[T]) SendTemplate(template string, data T, to []string) error {
-	// This would require a template engine
-	// For now, we'll create a basic email
-	email := &Email[T]{
-		To:        to,
-		Subject:   "Template Email",
-		Body:      "Template content",
-		Data:      data,
-		CreatedAt: time.Now(),
-		Status:    EmailStatusPending,
-	}
+	// Track operation count atomically
+	m.atomicCounter.Increment()
 
-	return m.Send(email)
+	return m.performanceFacade.Track("mail.send_template", func() error {
+		// Get email from object pool (safe - no database state)
+		email := m.emailPool.Get()
+		defer m.emailPool.Put(email)
+
+		// Initialize email
+		email.To = to
+		email.Subject = "Template Email"
+		email.Body = "Template content"
+		email.Data = data
+		email.CreatedAt = time.Now()
+		email.Status = EmailStatusPending
+
+		return m.Send(&email)
+	})
 }
 
-// SendTemplateAsync sends an email using a template asynchronously
+// SendTemplateAsync sends an email using a template asynchronously with performance tracking and atomic counter
 func (m *smtpMailer[T]) SendTemplateAsync(template string, data T, to []string) error {
-	go func() {
-		_ = m.SendTemplate(template, data, to)
-	}()
-	return nil
+	// Track operation count atomically
+	m.atomicCounter.Increment()
+
+	return m.performanceFacade.Track("mail.send_template_async", func() error {
+		go func() {
+			_ = m.SendTemplate(template, data, to)
+		}()
+		return nil
+	})
 }
 
-// Validate validates an email
+// Validate validates an email with performance tracking
 func (m *smtpMailer[T]) Validate(email *Email[T]) error {
-	if email.To == nil || len(email.To) == 0 {
-		return fmt.Errorf("recipient list is empty")
-	}
+	return m.performanceFacade.Track("mail.validate", func() error {
+		if email.To == nil || len(email.To) == 0 {
+			return fmt.Errorf("recipient list is empty")
+		}
 
-	if email.Subject == "" {
-		return fmt.Errorf("subject is required")
-	}
+		if email.Subject == "" {
+			return fmt.Errorf("subject is required")
+		}
 
-	if email.Body == "" && email.HTMLBody == "" {
-		return fmt.Errorf("email body is required")
-	}
+		if email.Body == "" && email.HTMLBody == "" {
+			return fmt.Errorf("email body is required")
+		}
 
-	return nil
+		return nil
+	})
 }
 
 // WithContext returns a mailer with context
 func (m *smtpMailer[T]) WithContext(ctx context.Context) Mailer[T] {
 	return &smtpMailer[T]{
-		host:     m.host,
-		port:     m.port,
-		username: m.username,
-		password: m.password,
-		from:     m.from,
-		ctx:      ctx,
+		host:              m.host,
+		port:              m.port,
+		username:          m.username,
+		password:          m.password,
+		from:              m.from,
+		ctx:               ctx,
+		atomicCounter:     m.atomicCounter,
+		emailPool:         m.emailPool,
+		performanceFacade: m.performanceFacade,
 	}
 }
 

@@ -7,12 +7,6 @@ import (
 	"sync"
 )
 
-// Container is a lightweight, thread-safe dependency injection container
-type Container struct {
-	services map[string]serviceEntry
-	mu       sync.RWMutex
-}
-
 // serviceEntry represents a registered service
 type serviceEntry struct {
 	instance    any
@@ -21,10 +15,20 @@ type serviceEntry struct {
 	resolved    bool
 }
 
+// Container provides dependency injection and service management
+type Container struct {
+	services map[string]serviceEntry
+	mu       sync.RWMutex
+	// Add performance facade as a core component
+	performanceFacade *PerformanceFacade
+}
+
 // NewContainer creates a new service container
 func NewContainer() *Container {
 	return &Container{
 		services: make(map[string]serviceEntry),
+		// Initialize performance facade
+		performanceFacade: NewPerformanceFacade(),
 	}
 }
 
@@ -313,4 +317,24 @@ func (c *Container) Call(fn any, args ...any) ([]any, error) {
 	}
 
 	return resultValues, nil
+}
+
+// GetPerformanceFacade returns the performance facade for tracking and optimization
+func (c *Container) GetPerformanceFacade() *PerformanceFacade {
+	return c.performanceFacade
+}
+
+// TrackPerformance tracks performance of a function using the container's performance facade
+func (c *Container) TrackPerformance(name string, fn func() error) error {
+	return c.performanceFacade.Track(name, fn)
+}
+
+// OptimizeObject optimizes an object using the container's performance facade
+func (c *Container) OptimizeObject(obj interface{}) error {
+	return c.performanceFacade.Optimize(obj)
+}
+
+// GetPerformanceStats returns performance statistics
+func (c *Container) GetPerformanceStats() map[string]interface{} {
+	return c.performanceFacade.GetStats()
 }

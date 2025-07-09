@@ -69,55 +69,87 @@ type JobDispatcher[T any] interface {
 	WithContext(ctx context.Context) JobDispatcher[T]
 }
 
-// jobDispatcher implements JobDispatcher[T]
+// jobDispatcher implements JobDispatcher[T] with performance optimizations
 type jobDispatcher[T any] struct {
 	queue Queue[T]
 	ctx   context.Context
+	// Performance optimizations (safe for job operations)
+	atomicCounter     *AtomicCounter
+	jobPool           *ObjectPool[Job[T]]
+	performanceFacade *PerformanceFacade
 }
 
-// NewJobDispatcher creates a new job dispatcher
+// NewJobDispatcher creates a new job dispatcher with performance optimizations
 func NewJobDispatcher[T any](queue Queue[T]) JobDispatcher[T] {
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
+	// Create object pool for job objects (safe - no database state)
+	jobPool := NewObjectPool[Job[T]](100,
+		func() Job[T] { return Job[T]{} },
+		func(job Job[T]) Job[T] { return Job[T]{} },
+	)
+
 	return &jobDispatcher[T]{
-		queue: queue,
-		ctx:   context.Background(),
+		queue:             queue,
+		ctx:               context.Background(),
+		atomicCounter:     atomicCounter,
+		jobPool:           jobPool,
+		performanceFacade: performanceFacade,
 	}
 }
 
-// Dispatch dispatches a job (respects ShouldQueue trait)
+// Dispatch dispatches a job (respects ShouldQueue trait) with performance tracking and atomic counter
 func (d *jobDispatcher[T]) Dispatch(job T) error {
-	// Check if job implements JobTraits
-	if queueableJob, ok := any(job).(JobTraits); ok && queueableJob.ShouldQueue() {
-		// Queue the job
-		goJob := &Job[T]{
-			ID:         "job_" + time.Now().Format("20060102150405"),
-			Data:       job,
-			Attempts:   0,
-			MaxRetries: queueableJob.GetMaxAttempts(),
-			CreatedAt:  time.Now(),
+	// Track operation count atomically
+	d.atomicCounter.Increment()
+
+	return d.performanceFacade.Track("job.dispatch", func() error {
+		// Check if job implements JobTraits
+		if queueableJob, ok := any(job).(JobTraits); ok && queueableJob.ShouldQueue() {
+			// Get job from object pool (safe - no database state)
+			goJob := d.jobPool.Get()
+			defer d.jobPool.Put(goJob)
+
+			// Initialize job
+			goJob.ID = "job_" + time.Now().Format("20060102150405")
+			goJob.Data = job
+			goJob.Attempts = 0
+			goJob.MaxRetries = queueableJob.GetMaxAttempts()
+			goJob.CreatedAt = time.Now()
+
+			return d.queue.Push(&goJob)
 		}
-		return d.queue.Push(goJob)
-	}
 
-	// Execute synchronously
-	return d.executeJob(job)
+		// Execute synchronously
+		return d.executeJob(job)
+	})
 }
 
-// DispatchSync dispatches a job synchronously (ignores ShouldQueue trait)
+// DispatchSync dispatches a job synchronously (ignores ShouldQueue trait) with performance tracking and atomic counter
 func (d *jobDispatcher[T]) DispatchSync(job T) error {
-	return d.executeJob(job)
+	// Track operation count atomically
+	d.atomicCounter.Increment()
+
+	return d.performanceFacade.Track("job.dispatch_sync", func() error {
+		return d.executeJob(job)
+	})
 }
 
-// executeJob executes a job synchronously
+// executeJob executes a job synchronously with performance tracking
 func (d *jobDispatcher[T]) executeJob(job T) error {
-	// For now, we'll just call the Handle method if it exists
-	if handler, ok := any(job).(interface {
-		Handle(ctx context.Context) error
-	}); ok {
-		return handler.Handle(d.ctx)
-	}
+	return d.performanceFacade.Track("job.execute", func() error {
+		// For now, we'll just call the Handle method if it exists
+		if handler, ok := any(job).(interface {
+			Handle(ctx context.Context) error
+		}); ok {
+			return handler.Handle(d.ctx)
+		}
 
-	// If no Handle method, just return success
-	return nil
+		// If no Handle method, just return success
+		return nil
+	})
 }
 
 // GetQueue returns the underlying queue
@@ -128,53 +160,71 @@ func (d *jobDispatcher[T]) GetQueue() Queue[T] {
 // WithContext returns a dispatcher with context
 func (d *jobDispatcher[T]) WithContext(ctx context.Context) JobDispatcher[T] {
 	return &jobDispatcher[T]{
-		queue: d.queue.WithContext(ctx),
-		ctx:   ctx,
+		queue:             d.queue.WithContext(ctx),
+		ctx:               ctx,
+		atomicCounter:     d.atomicCounter,
+		jobPool:           d.jobPool,
+		performanceFacade: d.performanceFacade,
 	}
 }
 
-// QueueWorker processes jobs from a queue
+// QueueWorker processes jobs from a queue with performance optimizations
 type QueueWorker[T any] struct {
 	queue   Queue[T]
 	handler JobHandler[T]
 	ctx     context.Context
 	cancel  context.CancelFunc
+	// Performance optimizations (safe for worker operations)
+	atomicCounter     *AtomicCounter
+	performanceFacade *PerformanceFacade
 }
 
-// NewQueueWorker creates a new queue worker
+// NewQueueWorker creates a new queue worker with performance optimizations
 func NewQueueWorker[T any](queue Queue[T], handler JobHandler[T]) *QueueWorker[T] {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create performance optimizations
+	atomicCounter := NewAtomicCounter()
+	performanceFacade := NewPerformanceFacade()
+
 	return &QueueWorker[T]{
-		queue:   queue,
-		handler: handler,
-		ctx:     ctx,
-		cancel:  cancel,
+		queue:             queue,
+		handler:           handler,
+		ctx:               ctx,
+		cancel:            cancel,
+		atomicCounter:     atomicCounter,
+		performanceFacade: performanceFacade,
 	}
 }
 
-// Start begins processing jobs
+// Start begins processing jobs with performance tracking and atomic counter
 func (w *QueueWorker[T]) Start() error {
-	for {
-		select {
-		case <-w.ctx.Done():
-			return w.ctx.Err()
-		default:
-			// Pop job from queue
-			job, err := w.queue.Pop()
-			if err != nil {
-				// No jobs available, wait a bit
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
+	return w.performanceFacade.Track("worker.start", func() error {
+		for {
+			select {
+			case <-w.ctx.Done():
+				return w.ctx.Err()
+			default:
+				// Track operation count atomically
+				w.atomicCounter.Increment()
 
-			// Process job
-			err = w.processJob(job)
-			if err != nil {
-				// Handle job failure
-				w.handleJobFailure(job, err)
+				// Pop job from queue
+				job, err := w.queue.Pop()
+				if err != nil {
+					// No jobs available, wait a bit
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+
+				// Process job
+				err = w.processJob(job)
+				if err != nil {
+					// Handle job failure
+					w.handleJobFailure(job, err)
+				}
 			}
 		}
-	}
+	})
 }
 
 // Stop stops the worker
@@ -182,14 +232,16 @@ func (w *QueueWorker[T]) Stop() {
 	w.cancel()
 }
 
-// processJob processes a single job
+// processJob processes a single job with performance tracking
 func (w *QueueWorker[T]) processJob(job *Job[T]) error {
-	// Update processed time
-	now := time.Now()
-	job.ProcessedAt = &now
+	return w.performanceFacade.Track("worker.process_job", func() error {
+		// Update processed time
+		now := time.Now()
+		job.ProcessedAt = &now
 
-	// Call handler
-	return w.handler(w.ctx, job)
+		// Call handler
+		return w.handler(w.ctx, job)
+	})
 }
 
 // handleJobFailure handles job processing failures
