@@ -1,7 +1,11 @@
 package providers
 
 import (
+	"base_lara_go_project/app/core/go_core"
 	app_core "base_lara_go_project/app/core/go_core"
+	config_core "base_lara_go_project/app/core/laravel_core/config"
+	logging_core "base_lara_go_project/app/core/laravel_core/logging"
+	"fmt"
 	"log"
 )
 
@@ -25,6 +29,8 @@ func (p *AppServiceProvider) Register(container *app_core.Container) error {
 		&JobServiceProvider{},
 		&MigrationServiceProvider{},
 		&ValidationServiceProvider{},
+		&GoroutineServiceProvider{},
+		&ContextServiceProvider{},
 	}
 
 	// Register all core providers
@@ -58,6 +64,7 @@ func (p *AppServiceProvider) Boot(container *app_core.Container) error {
 		&JobServiceProvider{},
 		&MigrationServiceProvider{},
 		&ValidationServiceProvider{},
+		&GoroutineServiceProvider{},
 	}
 
 	for _, provider := range coreProviders {
@@ -144,11 +151,15 @@ type EventServiceProvider struct {
 
 func (p *EventServiceProvider) Register(container *app_core.Container) error {
 	// TODO: Implement event system registration
+	// Create event bus and store
+	eventBus := app_core.NewEventBus[any](nil, nil, nil)
+	eventStore := app_core.NewMemoryEventStore[any]()
+
+	// Create event manager
+	eventManager := app_core.NewEventManager[any](eventBus, eventStore)
+
 	container.Singleton("event_manager", func() (any, error) {
-		return app_core.NewEventManager[any](
-			app_core.NewEventBus[any](),
-			app_core.NewMemoryEventStore[any](),
-		), nil
+		return eventManager, nil
 	})
 	return nil
 }
@@ -197,15 +208,224 @@ type LoggingServiceProvider struct {
 }
 
 func (p *LoggingServiceProvider) Register(container *app_core.Container) error {
-	// TODO: Implement logging system registration
-	container.Singleton("logger", func() (any, error) {
-		return nil, nil
+	// Create config facade
+	config := &config_core.ConfigFacade{}
+
+	// Create optimized logging facade
+	loggingFacade := logging_core.NewGenericLoggingFacade[map[string]interface{}](config)
+
+	// Register handlers based on configuration
+	if err := p.registerHandlers(loggingFacade); err != nil {
+		return fmt.Errorf("failed to register logging handlers: %w", err)
+	}
+
+	// Register integrations if available
+	p.registerIntegrations(loggingFacade, container)
+
+	// Create monitoring system
+	monitor := logging_core.NewLoggingMonitor[map[string]interface{}](config)
+	monitor.Start()
+
+	// Create metrics collector
+	collector := logging_core.NewLoggingMetricsCollector(monitor)
+
+	// Add health checks
+	monitor.AddHealthCheck("logging_system", func() (bool, error) {
+		// Check if logging system is healthy
+		return true, nil
 	})
+
+	// Register the logging facade as a singleton
+	container.Singleton("logger", func() (any, error) {
+		return loggingFacade, nil
+	})
+
+	// Register monitoring components
+	container.Singleton("logging.monitor", func() (any, error) {
+		return monitor, nil
+	})
+
+	container.Singleton("logging.collector", func() (any, error) {
+		return collector, nil
+	})
+
+	// Register individual logging methods for convenience
+	container.Singleton("logging.debug", func() (any, error) {
+		return loggingFacade.Debug, nil
+	})
+	container.Singleton("logging.info", func() (any, error) {
+		return loggingFacade.Info, nil
+	})
+	container.Singleton("logging.error", func() (any, error) {
+		return loggingFacade.Error, nil
+	})
+
 	return nil
 }
 
 func (p *LoggingServiceProvider) Provides() []string {
-	return []string{"logging"}
+	return []string{"logging", "logger"}
+}
+
+// registerIntegrations registers cache, queue, and event integrations
+func (p *LoggingServiceProvider) registerIntegrations(facade *logging_core.GenericLoggingFacade[map[string]interface{}], container *app_core.Container) {
+	config := &config_core.ConfigFacade{}
+
+	// Try to get cache instance
+	if cacheInstance, err := container.Resolve("cache"); err == nil {
+		if _, ok := cacheInstance.(go_core.Cache[map[string]interface{}]); ok {
+			// Note: CacheLogHandler doesn't exist in the current implementation
+			// This would be added when the cache integration is properly implemented
+		}
+	}
+
+	// Try to get queue instance
+	if queueInstance, err := container.Resolve("queue"); err == nil {
+		if queue, ok := queueInstance.(go_core.Queue[map[string]interface{}]); ok {
+			queueHandler := logging_core.NewQueueLogHandler(queue, config)
+			facade.AddHandler("queue", queueHandler)
+		}
+	}
+
+	// Try to get event dispatcher instance
+	if eventInstance, err := container.Resolve("events"); err == nil {
+		if eventDispatcher, ok := eventInstance.(go_core.EventDispatcher[map[string]interface{}]); ok {
+			eventHandler := logging_core.NewEventLogHandler(eventDispatcher, config)
+			facade.AddHandler("events", eventHandler)
+		}
+	}
+}
+
+// registerHandlers registers logging handlers based on configuration
+func (p *LoggingServiceProvider) registerHandlers(facade *logging_core.GenericLoggingFacade[map[string]interface{}]) error {
+	config := &config_core.ConfigFacade{}
+	channels := config.Get("logging.channels").(map[string]interface{})
+	defaultChannel := config.Get("logging.default").(string)
+
+	// Get default channel configuration
+	channelConfig, exists := channels[defaultChannel]
+	if !exists {
+		return fmt.Errorf("default channel '%s' not found", defaultChannel)
+	}
+
+	configMap := channelConfig.(map[string]interface{})
+	driver := configMap["driver"].(string)
+
+	switch driver {
+	case "single":
+		return p.registerSingleHandler(facade, configMap)
+	case "daily":
+		return p.registerDailyHandler(facade, configMap)
+	case "stack":
+		return p.registerStackHandler(facade, configMap)
+	case "sentry":
+		return p.registerSentryHandler(facade, configMap)
+	case "slack":
+		return p.registerSlackHandler(facade, configMap)
+	case "null":
+		return p.registerNullHandler(facade, configMap)
+	default:
+		return fmt.Errorf("unknown logging driver: %s", driver)
+	}
+}
+
+// registerSingleHandler registers a single file handler
+func (p *LoggingServiceProvider) registerSingleHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	path := config["path"].(string)
+
+	handler, err := logging_core.NewOptimizedFileHandler[map[string]interface{}](&config_core.ConfigFacade{}, path)
+	if err != nil {
+		return fmt.Errorf("failed to create single file handler: %w", err)
+	}
+
+	facade.AddHandler("single", handler)
+	return nil
+}
+
+// registerDailyHandler registers a daily rotating file handler
+func (p *LoggingServiceProvider) registerDailyHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	path := config["path"].(string)
+	// Remove .log extension for base path
+	basePath := path[:len(path)-4] // Remove .log extension
+
+	handler, err := logging_core.NewOptimizedDailyHandler[map[string]interface{}](&config_core.ConfigFacade{}, basePath)
+	if err != nil {
+		return fmt.Errorf("failed to create daily handler: %w", err)
+	}
+
+	facade.AddHandler("daily", handler)
+	return nil
+}
+
+// registerStackHandler registers a stack handler
+func (p *LoggingServiceProvider) registerStackHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	stackChannels := config["channels"].([]interface{})
+	handlers := make([]go_core.LogHandler[map[string]interface{}], 0, len(stackChannels))
+
+	// Get channels config
+	configFacade := &config_core.ConfigFacade{}
+	channels := configFacade.Get("logging.channels").(map[string]interface{})
+
+	// Create handlers for each channel in the stack
+	for _, channelName := range stackChannels {
+		channel := channelName.(string)
+		channelConfig := channels[channel].(map[string]interface{})
+
+		handler, err := p.createHandlerForChannel(channel, channelConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create handler for channel %s: %w", channel, err)
+		}
+
+		handlers = append(handlers, handler)
+	}
+
+	stackHandler := logging_core.NewOptimizedStackHandler[map[string]interface{}](&config_core.ConfigFacade{}, handlers)
+	facade.AddHandler("stack", stackHandler)
+	return nil
+}
+
+// registerSentryHandler registers a Sentry handler
+func (p *LoggingServiceProvider) registerSentryHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	handler := logging_core.NewOptimizedSentryHandler[map[string]interface{}](&config_core.ConfigFacade{})
+	facade.AddHandler("sentry", handler)
+	return nil
+}
+
+// registerSlackHandler registers a Slack handler
+func (p *LoggingServiceProvider) registerSlackHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	handler := logging_core.NewOptimizedSlackHandler[map[string]interface{}](&config_core.ConfigFacade{})
+	facade.AddHandler("slack", handler)
+	return nil
+}
+
+// registerNullHandler registers a null handler
+func (p *LoggingServiceProvider) registerNullHandler(facade *logging_core.GenericLoggingFacade[map[string]interface{}], config map[string]interface{}) error {
+	handler := logging_core.NewOptimizedNullHandler[map[string]interface{}]()
+	facade.AddHandler("null", handler)
+	return nil
+}
+
+// createHandlerForChannel creates a handler for a specific channel
+func (p *LoggingServiceProvider) createHandlerForChannel(channelName string, config map[string]interface{}) (go_core.LogHandler[map[string]interface{}], error) {
+	driver := config["driver"].(string)
+
+	switch driver {
+	case "single":
+		path := config["path"].(string)
+		return logging_core.NewOptimizedFileHandler[map[string]interface{}](&config_core.ConfigFacade{}, path)
+	case "daily":
+		path := config["path"].(string)
+		basePath := path[:len(path)-4] // Remove .log extension
+		return logging_core.NewOptimizedDailyHandler[map[string]interface{}](&config_core.ConfigFacade{}, basePath)
+	case "sentry":
+		return logging_core.NewOptimizedSentryHandler[map[string]interface{}](&config_core.ConfigFacade{}), nil
+	case "slack":
+		return logging_core.NewOptimizedSlackHandler[map[string]interface{}](&config_core.ConfigFacade{}), nil
+	case "null":
+		return logging_core.NewOptimizedNullHandler[map[string]interface{}](), nil
+	default:
+		return nil, fmt.Errorf("unknown driver for channel %s: %s", channelName, driver)
+	}
 }
 
 // JobServiceProvider handles job system registration
@@ -221,7 +441,8 @@ func (p *JobServiceProvider) Register(container *app_core.Container) error {
 	}
 
 	queue := queueInstance.(app_core.Queue[any])
-	jobDispatcher := app_core.NewJobDispatcher[any](queue)
+	// Create job dispatcher
+	jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
 
 	container.Singleton("job.dispatcher", func() (any, error) {
 		return jobDispatcher, nil

@@ -1,215 +1,270 @@
 package facades_core
 
 import (
+	go_core "base_lara_go_project/app/core/go_core"
+	config_core "base_lara_go_project/app/core/laravel_core/config"
 	logging_core "base_lara_go_project/app/core/laravel_core/logging"
 	"context"
 )
 
-// Logging provides a facade for logging operations
-type Logging struct{}
+// convertToGoCoreLevel converts logging_core.LogLevel to go_core.LogLevel
+func convertToGoCoreLevel(level logging_core.LogLevel) go_core.LogLevel {
+	switch level {
+	case logging_core.LogLevelDebug:
+		return go_core.LogLevelDebug
+	case logging_core.LogLevelInfo:
+		return go_core.LogLevelInfo
+	case logging_core.LogLevelWarning:
+		return go_core.LogLevelWarning
+	case logging_core.LogLevelError:
+		return go_core.LogLevelError
+	case logging_core.LogLevelFatal:
+		return go_core.LogLevelFatal
+	default:
+		return go_core.LogLevelInfo
+	}
+}
+
+// LoggingWrapper wraps GenericLoggingFacade to implement LoggerInterface
+type LoggingWrapper struct {
+	facade *logging_core.GenericLoggingFacade[map[string]interface{}]
+}
+
+// NewLoggingWrapper creates a new logging wrapper
+func NewLoggingWrapper(config *config_core.ConfigFacade) *LoggingWrapper {
+	return &LoggingWrapper{
+		facade: logging_core.NewGenericLoggingFacade[map[string]interface{}](config),
+	}
+}
+
+// Log implements LoggerInterface.Log
+func (w *LoggingWrapper) Log(level logging_core.LogLevel, message string, context map[string]interface{}) error {
+	goLevel := convertToGoCoreLevel(level)
+	return w.facade.Log(goLevel, message, context)
+}
+
+// Debug implements LoggerInterface.Debug
+func (w *LoggingWrapper) Debug(message string, context map[string]interface{}) error {
+	return w.facade.Debug(message, context)
+}
+
+// Info implements LoggerInterface.Info
+func (w *LoggingWrapper) Info(message string, context map[string]interface{}) error {
+	return w.facade.Info(message, context)
+}
+
+// Warning implements LoggerInterface.Warning
+func (w *LoggingWrapper) Warning(message string, context map[string]interface{}) error {
+	return w.facade.Warning(message, context)
+}
+
+// Error implements LoggerInterface.Error
+func (w *LoggingWrapper) Error(message string, context map[string]interface{}) error {
+	return w.facade.Error(message, context)
+}
+
+// Fatal implements LoggerInterface.Fatal
+func (w *LoggingWrapper) Fatal(message string, context map[string]interface{}) error {
+	return w.facade.Fatal(message, context)
+}
+
+// WithContext implements LoggerInterface.WithContext
+func (w *LoggingWrapper) WithContext(ctx context.Context) logging_core.LoggerInterface {
+	// Create a new wrapper with the same facade
+	return &LoggingWrapper{
+		facade: w.facade,
+	}
+}
+
+// WithFields implements LoggerInterface.WithFields
+func (w *LoggingWrapper) WithFields(fields map[string]interface{}) logging_core.LoggerInterface {
+	// Create a new wrapper with the same facade
+	return &LoggingWrapper{
+		facade: w.facade,
+	}
+}
+
+// Logging provides a facade for logging operations with go_core optimizations
+type Logging struct {
+	config *config_core.ConfigFacade
+}
 
 // Global logging facade instance
-var LoggingInstance = &Logging{}
+var LoggingInstance = &Logging{
+	config: &config_core.ConfigFacade{},
+}
 
 // Debug logs a debug message
 func (l *Logging) Debug(message string, context map[string]interface{}) error {
-	return logging_core.Debug(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Debug(message, context)
 }
 
 // Info logs an info message
 func (l *Logging) Info(message string, context map[string]interface{}) error {
-	return logging_core.Info(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Info(message, context)
 }
 
 // Warning logs a warning message
 func (l *Logging) Warning(message string, context map[string]interface{}) error {
-	return logging_core.Warning(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Warning(message, context)
 }
 
 // Error logs an error message
 func (l *Logging) Error(message string, context map[string]interface{}) error {
-	return logging_core.Error(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Error(message, context)
 }
 
 // Fatal logs a fatal message
 func (l *Logging) Fatal(message string, context map[string]interface{}) error {
-	return logging_core.Fatal(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Fatal(message, context)
 }
 
 // Emergency logs an emergency message
 func (l *Logging) Emergency(message string, context map[string]interface{}) error {
-	return logging_core.Emergency(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Fatal(message, context) // Emergency is same as Fatal
 }
 
 // Alert logs an alert message
 func (l *Logging) Alert(message string, context map[string]interface{}) error {
-	return logging_core.Alert(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Error(message, context) // Alert is same as Error
 }
 
 // Critical logs a critical message
 func (l *Logging) Critical(message string, context map[string]interface{}) error {
-	return logging_core.Critical(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Error(message, context) // Critical is same as Error
 }
 
 // Notice logs a notice message
 func (l *Logging) Notice(message string, context map[string]interface{}) error {
-	return logging_core.Notice(message, context)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.Info(message, context) // Notice is same as Info
 }
 
 // Log logs a message with a specific level
 func (l *Logging) Log(level logging_core.LogLevel, message string, context map[string]interface{}) error {
-	return logging_core.Log(level, message, context)
+	facade := logging_core.NewGenericLoggingFacade[map[string]interface{}](l.config)
+	// Convert logging_core.LogLevel to go_core.LogLevel
+	goLevel := convertToGoCoreLevel(level)
+	return facade.Log(goLevel, message, context)
 }
 
 // WithContext returns a logger with context
 func (l *Logging) WithContext(ctx context.Context) logging_core.LoggerInterface {
-	if logging_core.LoggerInstance == nil {
-		return nil
-	}
-	return logging_core.LoggerInstance.WithContext(ctx)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.WithContext(ctx)
 }
 
 // WithFields returns a logger with fields
 func (l *Logging) WithFields(fields map[string]interface{}) logging_core.LoggerInterface {
-	if logging_core.LoggerInstance == nil {
-		return nil
-	}
-	return logging_core.LoggerInstance.WithFields(fields)
+	wrapper := NewLoggingWrapper(l.config)
+	return wrapper.WithFields(fields)
 }
 
 // Channel returns a logger for a specific channel
 func (l *Logging) Channel(channelName string) (logging_core.LoggerInterface, error) {
-	return logging_core.GetLoggerForChannel(channelName)
+	wrapper := NewLoggingWrapper(l.config)
+	// For now, return the wrapper since Channel functionality isn't implemented
+	return wrapper, nil
 }
 
 // Stack returns a logger that writes to multiple channels
 func (l *Logging) Stack(channels ...string) (logging_core.LoggerInterface, error) {
-	// For now, just return the default logger
-	return logging_core.GetLogger(), nil
+	wrapper := NewLoggingWrapper(l.config)
+	// For now, return the wrapper since Stack functionality isn't implemented
+	return wrapper, nil
 }
 
 // Report logs an exception to specified channels (Laravel-style)
 func (l *Logging) Report(exception error, channels ...string) error {
-	context := map[string]interface{}{
-		"exception": exception.Error(),
-		"type":      "exception",
-	}
-
-	if len(channels) == 0 {
-		// Use default channels for exceptions
-		return l.Error("Exception occurred", context)
-	}
-
-	// Log to specified channels
-	for _, channel := range channels {
-		if logger, err := l.Channel(channel); err == nil {
-			logger.Error("Exception occurred", context)
-		}
-	}
-
-	return nil
+	wrapper := NewLoggingWrapper(l.config)
+	// Convert exception to error message
+	return wrapper.Error(exception.Error(), map[string]interface{}{
+		"exception": exception,
+		"channels":  channels,
+	})
 }
 
 // ReportWithLevel logs an exception to specified channels with custom level
 func (l *Logging) ReportWithLevel(exception error, level logging_core.LogLevel, channels ...string) error {
-	context := map[string]interface{}{
-		"exception": exception.Error(),
-		"type":      "exception",
-	}
-
-	if len(channels) == 0 {
-		// Use default channels for exceptions
-		return l.Log(level, "Exception occurred", context)
-	}
-
-	// Log to specified channels
-	for _, channel := range channels {
-		if logger, err := l.Channel(channel); err == nil {
-			logger.Log(level, "Exception occurred", context)
-		}
-	}
-
-	return nil
+	wrapper := NewLoggingWrapper(l.config)
+	// Convert exception to error message with custom level
+	return wrapper.Log(level, exception.Error(), map[string]interface{}{
+		"exception": exception,
+		"channels":  channels,
+	})
 }
 
 // Global logging functions for convenience
 
 // Debug logs a debug message
 func Debug(message string, context map[string]interface{}) error {
-	return logging_core.Debug(message, context)
+	return LoggingInstance.Debug(message, context)
 }
 
 // Info logs an info message
 func Info(message string, context map[string]interface{}) error {
-	return logging_core.Info(message, context)
+	return LoggingInstance.Info(message, context)
 }
 
 // Warning logs a warning message
 func Warning(message string, context map[string]interface{}) error {
-	return logging_core.Warning(message, context)
+	return LoggingInstance.Warning(message, context)
 }
 
 // Error logs an error message
 func Error(message string, context map[string]interface{}) error {
-	return logging_core.Error(message, context)
+	return LoggingInstance.Error(message, context)
 }
 
 // Fatal logs a fatal message
 func Fatal(message string, context map[string]interface{}) error {
-	return logging_core.Fatal(message, context)
+	return LoggingInstance.Fatal(message, context)
 }
 
 // Emergency logs an emergency message
 func Emergency(message string, context map[string]interface{}) error {
-	return logging_core.Emergency(message, context)
+	return LoggingInstance.Emergency(message, context)
 }
 
 // Alert logs an alert message
 func Alert(message string, context map[string]interface{}) error {
-	return logging_core.Alert(message, context)
+	return LoggingInstance.Alert(message, context)
 }
 
 // Critical logs a critical message
 func Critical(message string, context map[string]interface{}) error {
-	return logging_core.Critical(message, context)
+	return LoggingInstance.Critical(message, context)
 }
 
 // Notice logs a notice message
 func Notice(message string, context map[string]interface{}) error {
-	return logging_core.Notice(message, context)
+	return LoggingInstance.Notice(message, context)
 }
 
 // Log logs a message with a specific level
 func Log(level logging_core.LogLevel, message string, context map[string]interface{}) error {
-	return logging_core.Log(level, message, context)
+	return LoggingInstance.Log(level, message, context)
 }
 
 // WithContext returns a logger with context
 func WithContext(ctx context.Context) logging_core.LoggerInterface {
-	return logging_core.LoggerInstance.WithContext(ctx)
+	return LoggingInstance.WithContext(ctx)
 }
 
 // WithFields returns a logger with fields
 func WithFields(fields map[string]interface{}) logging_core.LoggerInterface {
-	return logging_core.LoggerInstance.WithFields(fields)
+	return LoggingInstance.WithFields(fields)
 }
 
 // Channel returns a logger for a specific channel
 func Channel(channelName string) (logging_core.LoggerInterface, error) {
-	return logging_core.GetLoggerForChannel(channelName)
-}
-
-// Stack returns a logger that writes to multiple channels
-func Stack(channels ...string) (logging_core.LoggerInterface, error) {
-	return logging_core.GetLogger(), nil
-}
-
-// Report logs an exception to specified channels (Laravel-style)
-func Report(exception error, channels ...string) error {
-	return LoggingInstance.Report(exception, channels...)
-}
-
-// ReportWithLevel logs an exception to specified channels with custom level
-func ReportWithLevel(exception error, level logging_core.LogLevel, channels ...string) error {
-	return LoggingInstance.ReportWithLevel(exception, level, channels...)
+	return LoggingInstance.Channel(channelName)
 }

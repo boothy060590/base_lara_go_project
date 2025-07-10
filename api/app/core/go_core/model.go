@@ -40,14 +40,22 @@ type BaseModel[T any] struct {
 	config ModelConfig
 	db     *gorm.DB
 	cache  Cache[T]
+
+	// Optimization fields
+	workStealingPool any
+	customAllocator  any
+	profileOptimizer any
 }
 
 // NewBaseModel creates a new base model
-func NewBaseModel[T any](db *gorm.DB, cache Cache[T], config ModelConfig) *BaseModel[T] {
+func NewBaseModel[T any](db *gorm.DB, cache Cache[T], config ModelConfig, wsp any, ca any, pgo any) *BaseModel[T] {
 	return &BaseModel[T]{
-		config: config,
-		db:     db,
-		cache:  cache,
+		config:           config,
+		db:               db,
+		cache:            cache,
+		workStealingPool: wsp,
+		customAllocator:  ca,
+		profileOptimizer: pgo,
 	}
 }
 

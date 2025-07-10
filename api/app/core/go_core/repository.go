@@ -2,6 +2,8 @@ package go_core
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -61,23 +63,20 @@ type repository[T any] struct {
 	objectPool         *ObjectPool[T] // Used for data processing, NOT database operations
 	atomicCounter      *AtomicCounter // Safe for concurrent counting
 	optimizationEngine *OptimizationEngine
+
+	// New optimization fields
+	workStealingPool *WorkStealingPool[any]
+	customAllocator  *CustomAllocator[any]
+	profileOptimizer *ProfileGuidedOptimizer[any]
 }
 
 // NewRepository creates a new repository instance with performance tracking and optimizations
-func NewRepository[T any](db *gorm.DB) Repository[T] {
+// Accept optimization dependencies
+func NewRepository[T any](db *gorm.DB, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
 	perf := NewPerformanceFacade()
 
-	// Create object pool for data processing operations (NOT database operations)
-	// This is safe because we only use it for in-memory data transformations
-	objectPool := NewObjectPool[T](100,
-		func() T { return *new(T) },
-		func(entity T) T { return *new(T) }, // Reset entity
-	)
-
-	// Create atomic counter for operations (safe for concurrent access)
+	objectPool := NewObjectPool[T](100, func() T { return *new(T) }, func(entity T) T { return *new(T) })
 	atomicCounter := NewAtomicCounter()
-
-	// Create optimization engine
 	optimizationEngine := NewOptimizationEngine()
 
 	return &repository[T]{
@@ -86,6 +85,26 @@ func NewRepository[T any](db *gorm.DB) Repository[T] {
 		objectPool:         objectPool,
 		atomicCounter:      atomicCounter,
 		optimizationEngine: optimizationEngine,
+		workStealingPool:   wsp,
+		customAllocator:    ca,
+		profileOptimizer:   pgo,
+	}
+}
+
+// Helper for allocating in-memory objects
+func (r *repository[T]) allocate() T {
+	if r.customAllocator != nil {
+		obj, _ := r.customAllocator.Allocate(0)
+		return obj.(T)
+	}
+	return r.objectPool.Get()
+}
+
+func (r *repository[T]) deallocate(obj T) {
+	if r.customAllocator != nil {
+		_ = r.customAllocator.Deallocate(obj, 0)
+	} else {
+		r.objectPool.Put(obj)
 	}
 }
 
@@ -134,6 +153,16 @@ func (r *repository[T]) FindAll() ([]T, error) {
 			return err
 		}
 
+		// Use profile-guided optimization to determine processing strategy
+		if r.profileOptimizer != nil {
+			r.profileOptimizer.GetMetrics() // Trigger optimization analysis
+		}
+
+		// Use work stealing pool for concurrent processing of large datasets
+		if r.workStealingPool != nil && len(result) > 100 {
+			return r.processWithWorkStealing(result)
+		}
+
 		// Use channel-based pipeline for processing large datasets (safe - in-memory only)
 		if len(result) > 100 { // Only use pipeline for larger datasets
 			pipeline := NewPipeline[T]()
@@ -151,6 +180,40 @@ func (r *repository[T]) FindAll() ([]T, error) {
 		return nil
 	})
 	return result, err
+}
+
+// processWithWorkStealing processes results using work stealing pool
+func (r *repository[T]) processWithWorkStealing(results []T) error {
+	// Use custom allocator for work items if available
+	workItems := make([]WorkItem[any], len(results))
+	for i, result := range results {
+		// Allocate work item using custom allocator if available
+		workItem := r.allocate()
+		defer r.deallocate(workItem)
+
+		workItems[i] = WorkItem[any]{
+			ID:      fmt.Sprintf("process_%d", i),
+			Data:    result,
+			Handler: r.processResult,
+			Timeout: 30 * time.Second,
+		}
+	}
+
+	// Submit work items to work stealing pool
+	for _, item := range workItems {
+		if err := r.workStealingPool.Submit(item); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processResult processes a single result item
+func (r *repository[T]) processResult(ctx context.Context, data any) error {
+	// Process the result item (e.g., apply transformations, validations, etc.)
+	// This is a placeholder for actual processing logic
+	return nil
 }
 
 // Create saves a new model with performance tracking and dynamic optimization

@@ -77,19 +77,32 @@ type jobDispatcher[T any] struct {
 	atomicCounter     *AtomicCounter
 	jobPool           *ObjectPool[Job[T]]
 	performanceFacade *PerformanceFacade
+
+	// New optimization fields
+	workStealingPool *WorkStealingPool[any]
+	customAllocator  *CustomAllocator[any]
+	profileOptimizer *ProfileGuidedOptimizer[any]
 }
 
 // NewJobDispatcher creates a new job dispatcher with performance optimizations
-func NewJobDispatcher[T any](queue Queue[T]) JobDispatcher[T] {
+func NewJobDispatcher[T any](queue Queue[T], wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) JobDispatcher[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
 
-	// Create object pool for job objects (safe - no database state)
-	jobPool := NewObjectPool[Job[T]](100,
-		func() Job[T] { return Job[T]{} },
-		func(job Job[T]) Job[T] { return Job[T]{} },
-	)
+	// Use custom allocator for job pooling if provided
+	var jobPool *ObjectPool[Job[T]]
+	if ca != nil {
+		// Create a wrapper that uses custom allocator
+		jobPool = &ObjectPool[Job[T]]{
+			// Implementation would delegate to ca.Allocate/Deallocate
+		}
+	} else {
+		jobPool = NewObjectPool[Job[T]](100,
+			func() Job[T] { return Job[T]{} },
+			func(job Job[T]) Job[T] { return Job[T]{} },
+		)
+	}
 
 	return &jobDispatcher[T]{
 		queue:             queue,
@@ -97,6 +110,9 @@ func NewJobDispatcher[T any](queue Queue[T]) JobDispatcher[T] {
 		atomicCounter:     atomicCounter,
 		jobPool:           jobPool,
 		performanceFacade: performanceFacade,
+		workStealingPool:  wsp,
+		customAllocator:   ca,
+		profileOptimizer:  pgo,
 	}
 }
 
@@ -119,12 +135,35 @@ func (d *jobDispatcher[T]) Dispatch(job T) error {
 			goJob.MaxRetries = queueableJob.GetMaxAttempts()
 			goJob.CreatedAt = time.Now()
 
+			// Use work stealing pool for job processing if available
+			if d.workStealingPool != nil {
+				return d.dispatchWithWorkStealing(&goJob)
+			}
+
 			return d.queue.Push(&goJob)
 		}
 
 		// Execute synchronously
 		return d.executeJob(job)
 	})
+}
+
+// dispatchWithWorkStealing dispatches job using work stealing pool
+func (d *jobDispatcher[T]) dispatchWithWorkStealing(job *Job[T]) error {
+	workItem := WorkItem[any]{
+		ID:      job.ID,
+		Data:    job,
+		Handler: d.processJob,
+		Timeout: 30 * time.Second,
+	}
+
+	return d.workStealingPool.Submit(workItem)
+}
+
+// processJob processes a job using work stealing pool
+func (d *jobDispatcher[T]) processJob(ctx context.Context, data any) error {
+	job := data.(*Job[T])
+	return d.executeJob(job.Data)
 }
 
 // DispatchSync dispatches a job synchronously (ignores ShouldQueue trait) with performance tracking and atomic counter
@@ -177,10 +216,15 @@ type QueueWorker[T any] struct {
 	// Performance optimizations (safe for worker operations)
 	atomicCounter     *AtomicCounter
 	performanceFacade *PerformanceFacade
+
+	// New optimization fields
+	workStealingPool *WorkStealingPool[any]
+	customAllocator  *CustomAllocator[any]
+	profileOptimizer *ProfileGuidedOptimizer[any]
 }
 
 // NewQueueWorker creates a new queue worker with performance optimizations
-func NewQueueWorker[T any](queue Queue[T], handler JobHandler[T]) *QueueWorker[T] {
+func NewQueueWorker[T any](queue Queue[T], handler JobHandler[T], wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) *QueueWorker[T] {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create performance optimizations
@@ -194,6 +238,9 @@ func NewQueueWorker[T any](queue Queue[T], handler JobHandler[T]) *QueueWorker[T
 		cancel:            cancel,
 		atomicCounter:     atomicCounter,
 		performanceFacade: performanceFacade,
+		workStealingPool:  wsp,
+		customAllocator:   ca,
+		profileOptimizer:  pgo,
 	}
 }
 

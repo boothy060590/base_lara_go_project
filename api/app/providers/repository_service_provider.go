@@ -18,6 +18,11 @@ type RepositoryServiceProvider struct {
 
 // Register registers all application repositories
 func (p *RepositoryServiceProvider) Register(container *app_core.Container) error {
+	// Resolve optimization singletons
+	wsp, _ := container.Resolve("optimization.work_stealing")
+	ca, _ := container.Resolve("optimization.custom_allocator")
+	pgo, _ := container.Resolve("optimization.profile_guided")
+
 	// Register repositories with dependency injection
 	container.Singleton("repository.user", func() (any, error) {
 		// Get database instance from container
@@ -26,7 +31,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			log.Printf("Database not found, creating repository with nil database: %v", err)
 			// Create a temporary cache for now
 			cache := app_core.NewLocalCache[models.User]()
-			return repositories.NewUserRepository(nil, cache), nil
+			return repositories.NewUserRepository(nil, cache, wsp, ca, pgo), nil
 		}
 
 		db := dbInstance.(*gorm.DB)
@@ -41,7 +46,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.User])
 		}
 
-		return repositories.NewUserRepository(db, cache), nil
+		return repositories.NewUserRepository(db, cache, wsp, ca, pgo), nil
 	})
 
 	container.Singleton("repository.role", func() (any, error) {
@@ -49,11 +54,9 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		if err != nil {
 			log.Printf("Database not found, creating repository with nil database: %v", err)
 			cache := app_core.NewLocalCache[models.Role]()
-			return repositories.NewRoleRepository(nil, cache), nil
+			return repositories.NewRoleRepository(nil, cache, wsp, ca, pgo), nil
 		}
-
 		db := dbInstance.(*gorm.DB)
-
 		var cache app_core.Cache[models.Role]
 		cacheInstance, err := container.Resolve("cache.role")
 		if err != nil {
@@ -61,8 +64,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		} else {
 			cache = cacheInstance.(app_core.Cache[models.Role])
 		}
-
-		return repositories.NewRoleRepository(db, cache), nil
+		return repositories.NewRoleRepository(db, cache, wsp, ca, pgo), nil
 	})
 
 	container.Singleton("repository.permission", func() (any, error) {
@@ -70,11 +72,9 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		if err != nil {
 			log.Printf("Database not found, creating repository with nil database: %v", err)
 			cache := app_core.NewLocalCache[models.Permission]()
-			return repositories.NewPermissionRepository(nil, cache), nil
+			return repositories.NewPermissionRepository(nil, cache, wsp, ca, pgo), nil
 		}
-
 		db := dbInstance.(*gorm.DB)
-
 		var cache app_core.Cache[models.Permission]
 		cacheInstance, err := container.Resolve("cache.permission")
 		if err != nil {
@@ -82,8 +82,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		} else {
 			cache = cacheInstance.(app_core.Cache[models.Permission])
 		}
-
-		return repositories.NewPermissionRepository(db, cache), nil
+		return repositories.NewPermissionRepository(db, cache, wsp, ca, pgo), nil
 	})
 
 	container.Singleton("repository.category", func() (any, error) {
@@ -91,11 +90,9 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		if err != nil {
 			log.Printf("Database not found, creating repository with nil database: %v", err)
 			cache := app_core.NewLocalCache[models.Category]()
-			return repositories.NewCategoryRepository(nil, cache), nil
+			return repositories.NewCategoryRepository(nil, cache, wsp, ca, pgo), nil
 		}
-
 		db := dbInstance.(*gorm.DB)
-
 		var cache app_core.Cache[models.Category]
 		cacheInstance, err := container.Resolve("cache.category")
 		if err != nil {
@@ -103,8 +100,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		} else {
 			cache = cacheInstance.(app_core.Cache[models.Category])
 		}
-
-		return repositories.NewCategoryRepository(db, cache), nil
+		return repositories.NewCategoryRepository(db, cache, wsp, ca, pgo), nil
 	})
 
 	container.Singleton("repository.service", func() (any, error) {
@@ -122,7 +118,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 				CacheTTL:    30 * time.Minute,
 				CachePrefix: "service",
 			}
-			return app_core.NewBaseModel[models.Service](nil, cache, config), nil
+			return app_core.NewBaseModel[models.Service](nil, cache, config, wsp, ca, pgo), nil
 		}
 
 		db := dbInstance.(*gorm.DB)
@@ -145,7 +141,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			CacheTTL:    30 * time.Minute,
 			CachePrefix: "service",
 		}
-		return app_core.NewBaseModel[models.Service](db, cache, config), nil
+		return app_core.NewBaseModel[models.Service](db, cache, config, wsp, ca, pgo), nil
 	})
 
 	return nil

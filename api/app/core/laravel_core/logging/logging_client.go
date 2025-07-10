@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	go_core "base_lara_go_project/app/core/go_core"
 	client_core "base_lara_go_project/app/core/laravel_core/clients"
 	exceptions_core "base_lara_go_project/app/core/laravel_core/exceptions"
 )
@@ -12,7 +13,7 @@ import (
 type LoggingClient struct {
 	*client_core.BaseClient
 	level    LogLevel
-	handlers map[string]LogHandler
+	handlers map[string]go_core.LogHandler[any]
 }
 
 // NewLoggingClient creates a new logging client
@@ -20,7 +21,7 @@ func NewLoggingClient(config *client_core.ClientConfig) *LoggingClient {
 	return &LoggingClient{
 		BaseClient: client_core.NewBaseClient(config, "logging"),
 		level:      LogLevelInfo,
-		handlers:   make(map[string]LogHandler),
+		handlers:   make(map[string]go_core.LogHandler[any]),
 	}
 }
 
@@ -43,10 +44,18 @@ func (c *LoggingClient) Log(level LogLevel, message string, context map[string]i
 	context["client"] = c.GetName()
 	context["level"] = level
 
+	// Create log entry for go_core handlers
+	logEntry := go_core.LogEntry[any]{
+		Level:     go_core.LogLevel(level),
+		Message:   message,
+		Context:   context,
+		Timestamp: time.Now(),
+	}
+
 	// Route to appropriate handlers
 	for handlerName, handler := range c.handlers {
-		if handler.ShouldHandle(level) {
-			if err := handler.Handle(level, message, context); err != nil {
+		if handler.ShouldHandle(go_core.LogLevel(level)) {
+			if err := handler.Handle(logEntry); err != nil {
 				// Log handler error but don't fail the main log
 				fmt.Printf("Log handler %s failed: %v\n", handlerName, err)
 			}
@@ -118,7 +127,7 @@ func (c *LoggingClient) GetLevel() LogLevel {
 }
 
 // AddHandler adds a log handler
-func (c *LoggingClient) AddHandler(name string, handler LogHandler) {
+func (c *LoggingClient) AddHandler(name string, handler go_core.LogHandler[any]) {
 	c.handlers[name] = handler
 }
 
@@ -128,12 +137,12 @@ func (c *LoggingClient) RemoveHandler(name string) {
 }
 
 // GetHandler returns a log handler by name
-func (c *LoggingClient) GetHandler(name string) (LogHandler, bool) {
+func (c *LoggingClient) GetHandler(name string) (go_core.LogHandler[any], bool) {
 	handler, exists := c.handlers[name]
 	return handler, exists
 }
 
 // GetHandlers returns all log handlers
-func (c *LoggingClient) GetHandlers() map[string]LogHandler {
+func (c *LoggingClient) GetHandlers() map[string]go_core.LogHandler[any] {
 	return c.handlers
 }

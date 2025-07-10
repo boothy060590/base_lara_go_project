@@ -27,8 +27,8 @@ var QueueServiceInstance Queue[any]
 
 // InitializeEventDispatcher initializes the global event dispatcher
 func InitializeEventDispatcher() {
-	// Create basic event dispatcher and store
-	dispatcher := NewEventBus[any]()
+	// Create basic event dispatcher and store (without optimizations for basic initialization)
+	dispatcher := NewEventBus[any](nil, nil, nil)
 	store := NewMemoryEventStore[any]()
 	EventDispatcherServiceInstance = NewEventManager[any](dispatcher, store)
 }

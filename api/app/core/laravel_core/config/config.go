@@ -36,6 +36,12 @@ func (c *ConfigFacade) Get(key string, defaultValue ...interface{}) interface{} 
 		configMap = config.MailConfig()
 	case "logging":
 		configMap = config.LoggingConfig()
+	case "goroutine":
+		configMap = config.GoroutineConfig()
+	case "context":
+		configMap = config.ContextConfig()
+	case "go_channels":
+		configMap = config.GoChannelsConfig()
 	default:
 		if len(defaultValue) > 0 {
 			return defaultValue[0]

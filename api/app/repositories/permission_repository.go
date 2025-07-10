@@ -12,7 +12,7 @@ type PermissionRepository struct {
 	model *app_core.BaseModel[models.Permission]
 }
 
-func NewPermissionRepository(db *gorm.DB, cache app_core.Cache[models.Permission]) *PermissionRepository {
+func NewPermissionRepository(db *gorm.DB, cache app_core.Cache[models.Permission], wsp any, ca any, pgo any) *PermissionRepository {
 	config := app_core.ModelConfig{
 		TableName: "permissions",
 		Traits: app_core.ModelTraits{
@@ -23,8 +23,9 @@ func NewPermissionRepository(db *gorm.DB, cache app_core.Cache[models.Permission
 		CacheTTL:    30 * time.Minute,
 		CachePrefix: "permission",
 	}
+
 	return &PermissionRepository{
-		model: app_core.NewBaseModel[models.Permission](db, cache, config),
+		model: app_core.NewBaseModel[models.Permission](db, cache, config, wsp, ca, pgo),
 	}
 }
 

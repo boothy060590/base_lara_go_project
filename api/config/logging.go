@@ -6,6 +6,14 @@ import "base_lara_go_project/app/core/laravel_core/env"
 func LoggingConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"default": env.Get("LOG_CHANNEL", "stack"),
+		"level":   env.Get("LOG_LEVEL", "debug"),
+		// Performance optimization settings for go_core logging
+		"max_concurrency":  env.GetInt("LOG_MAX_CONCURRENCY", 100),
+		"buffer_size":      env.GetInt("LOG_BUFFER_SIZE", 1000),
+		"flush_interval":   env.GetInt("LOG_FLUSH_INTERVAL", 1), // seconds
+		"object_pool_size": env.GetInt("LOG_OBJECT_POOL_SIZE", 100),
+		"context_timeout":  env.GetInt("LOG_CONTEXT_TIMEOUT", 30), // seconds
+		"performance_mode": env.GetBool("LOG_PERFORMANCE_MODE", true),
 		"deprecations": map[string]interface{}{
 			"channel": env.Get("LOG_DEPRECATIONS_CHANNEL", "null"),
 			"trace":   env.GetBool("LOG_DEPRECATIONS_TRACE", false),

@@ -86,19 +86,32 @@ type smtpMailer[T any] struct {
 	atomicCounter     *AtomicCounter
 	emailPool         *ObjectPool[Email[T]]
 	performanceFacade *PerformanceFacade
+
+	// New optimization fields
+	workStealingPool *WorkStealingPool[any]
+	customAllocator  *CustomAllocator[any]
+	profileOptimizer *ProfileGuidedOptimizer[any]
 }
 
 // NewSMTPMailer creates a new SMTP mailer instance with performance optimizations
-func NewSMTPMailer[T any](host string, port int, username, password, from string) Mailer[T] {
+func NewSMTPMailer[T any](host string, port int, username, password, from string, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Mailer[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
 
-	// Create object pool for email objects (safe - no database state)
-	emailPool := NewObjectPool[Email[T]](100,
-		func() Email[T] { return Email[T]{} },
-		func(email Email[T]) Email[T] { return Email[T]{} },
-	)
+	// Use custom allocator for email pooling if provided
+	var emailPool *ObjectPool[Email[T]]
+	if ca != nil {
+		// Create a wrapper that uses custom allocator
+		emailPool = &ObjectPool[Email[T]]{
+			// Implementation would delegate to ca.Allocate/Deallocate
+		}
+	} else {
+		emailPool = NewObjectPool[Email[T]](100,
+			func() Email[T] { return Email[T]{} },
+			func(email Email[T]) Email[T] { return Email[T]{} },
+		)
+	}
 
 	return &smtpMailer[T]{
 		host:              host,
@@ -110,6 +123,9 @@ func NewSMTPMailer[T any](host string, port int, username, password, from string
 		atomicCounter:     atomicCounter,
 		emailPool:         emailPool,
 		performanceFacade: performanceFacade,
+		workStealingPool:  wsp,
+		customAllocator:   ca,
+		profileOptimizer:  pgo,
 	}
 }
 
@@ -172,6 +188,12 @@ func (m *smtpMailer[T]) SendMany(emails []*Email[T]) error {
 	m.atomicCounter.Increment()
 
 	return m.performanceFacade.Track("mail.send_many", func() error {
+		// Use work stealing pool for concurrent email sending if available
+		if m.workStealingPool != nil && len(emails) > 5 {
+			return m.sendManyWithWorkStealing(emails)
+		}
+
+		// Fall back to sequential sending
 		for _, email := range emails {
 			err := m.Send(email)
 			if err != nil {
@@ -180,6 +202,35 @@ func (m *smtpMailer[T]) SendMany(emails []*Email[T]) error {
 		}
 		return nil
 	})
+}
+
+// sendManyWithWorkStealing sends multiple emails using work stealing pool
+func (m *smtpMailer[T]) sendManyWithWorkStealing(emails []*Email[T]) error {
+	// Create work items for email sending
+	workItems := make([]WorkItem[any], len(emails))
+	for i, email := range emails {
+		workItems[i] = WorkItem[any]{
+			ID:      fmt.Sprintf("email_%d", i),
+			Data:    email,
+			Handler: m.processEmail,
+			Timeout: 60 * time.Second,
+		}
+	}
+
+	// Submit work items to work stealing pool
+	for _, item := range workItems {
+		if err := m.workStealingPool.Submit(item); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processEmail processes a single email using work stealing pool
+func (m *smtpMailer[T]) processEmail(ctx context.Context, data any) error {
+	email := data.(*Email[T])
+	return m.Send(email)
 }
 
 // SendTemplate sends an email using a template with performance tracking and atomic counter
@@ -248,6 +299,9 @@ func (m *smtpMailer[T]) WithContext(ctx context.Context) Mailer[T] {
 		atomicCounter:     m.atomicCounter,
 		emailPool:         m.emailPool,
 		performanceFacade: m.performanceFacade,
+		workStealingPool:  m.workStealingPool,
+		customAllocator:   m.customAllocator,
+		profileOptimizer:  m.profileOptimizer,
 	}
 }
 

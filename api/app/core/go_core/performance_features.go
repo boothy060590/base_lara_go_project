@@ -499,33 +499,3 @@ func (pf *PerformanceFacade) GetStats() map[string]interface{} {
 func (pf *PerformanceFacade) CreatePipeline() *Pipeline[any] {
 	return NewPipeline[any]()
 }
-
-// Example usage functions
-func ExamplePipelineUsage() {
-	// Create a pipeline for processing users
-	pipeline := NewPipeline[User]().
-		AddStage(FilterStage[User](func(user User) bool {
-			return user.Active
-		}))
-
-	// Execute pipeline
-	users := []User{{ID: 1, Name: "John", Active: true}}
-	results := pipeline.Execute(users)
-
-	// Process results
-	for result := range results {
-		fmt.Printf("Processed: %+v\n", result)
-	}
-}
-
-// User and UserDTO for example
-type User struct {
-	ID     uint   `json:"id"`
-	Name   string `json:"name"`
-	Active bool   `json:"active"`
-}
-
-type UserDTO struct {
-	ID   uint   `json:"id"`
-	Name string `json:"name"`
-}

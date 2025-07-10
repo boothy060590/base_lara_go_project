@@ -12,7 +12,7 @@ type CategoryRepository struct {
 	model *app_core.BaseModel[models.Category]
 }
 
-func NewCategoryRepository(db *gorm.DB, cache app_core.Cache[models.Category]) *CategoryRepository {
+func NewCategoryRepository(db *gorm.DB, cache app_core.Cache[models.Category], wsp any, ca any, pgo any) *CategoryRepository {
 	config := app_core.ModelConfig{
 		TableName: "categories",
 		Traits: app_core.ModelTraits{
@@ -23,8 +23,9 @@ func NewCategoryRepository(db *gorm.DB, cache app_core.Cache[models.Category]) *
 		CacheTTL:    30 * time.Minute,
 		CachePrefix: "category",
 	}
+
 	return &CategoryRepository{
-		model: app_core.NewBaseModel[models.Category](db, cache, config),
+		model: app_core.NewBaseModel[models.Category](db, cache, config, wsp, ca, pgo),
 	}
 }
 

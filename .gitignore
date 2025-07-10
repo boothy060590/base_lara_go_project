@@ -22,3 +22,4 @@ docker/api-nginx.conf
 docker/sentry/nginx.conf
 docker/nginx.conf
 
+.cursorrules

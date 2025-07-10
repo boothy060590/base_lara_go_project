@@ -14,7 +14,7 @@ type UserRepository struct {
 }
 
 // NewUserRepository creates a new user repository
-func NewUserRepository(db *gorm.DB, cache app_core.Cache[models.User]) *UserRepository {
+func NewUserRepository(db *gorm.DB, cache app_core.Cache[models.User], wsp any, ca any, pgo any) *UserRepository {
 	config := app_core.ModelConfig{
 		TableName: "users",
 		Traits: app_core.ModelTraits{
@@ -28,7 +28,7 @@ func NewUserRepository(db *gorm.DB, cache app_core.Cache[models.User]) *UserRepo
 	}
 
 	return &UserRepository{
-		model: app_core.NewBaseModel[models.User](db, cache, config),
+		model: app_core.NewBaseModel[models.User](db, cache, config, wsp, ca, pgo),
 	}
 }
 

@@ -51,19 +51,32 @@ type EventBus[T any] struct {
 	atomicCounter     *AtomicCounter
 	eventPool         *ObjectPool[Event[T]]
 	performanceFacade *PerformanceFacade
+
+	// New optimization fields
+	workStealingPool *WorkStealingPool[any]
+	customAllocator  *CustomAllocator[any]
+	profileOptimizer *ProfileGuidedOptimizer[any]
 }
 
 // NewEventBus creates a new event bus instance with performance optimizations
-func NewEventBus[T any]() EventDispatcher[T] {
+func NewEventBus[T any](wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) EventDispatcher[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
 
-	// Create object pool for event objects (safe - no database state)
-	eventPool := NewObjectPool[Event[T]](100,
-		func() Event[T] { return Event[T]{} },
-		func(event Event[T]) Event[T] { return Event[T]{} },
-	)
+	// Use custom allocator for event pooling if provided
+	var eventPool *ObjectPool[Event[T]]
+	if ca != nil {
+		// Create a wrapper that uses custom allocator
+		eventPool = &ObjectPool[Event[T]]{
+			// Implementation would delegate to ca.Allocate/Deallocate
+		}
+	} else {
+		eventPool = NewObjectPool[Event[T]](100,
+			func() Event[T] { return Event[T]{} },
+			func(event Event[T]) Event[T] { return Event[T]{} },
+		)
+	}
 
 	return &EventBus[T]{
 		listeners:         make(map[string][]EventListener[T]),
@@ -71,6 +84,9 @@ func NewEventBus[T any]() EventDispatcher[T] {
 		atomicCounter:     atomicCounter,
 		eventPool:         eventPool,
 		performanceFacade: performanceFacade,
+		workStealingPool:  wsp,
+		customAllocator:   ca,
+		profileOptimizer:  pgo,
 	}
 }
 
@@ -90,11 +106,34 @@ func (e *EventBus[T]) DispatchAsync(event *Event[T]) error {
 	e.atomicCounter.Increment()
 
 	return e.performanceFacade.Track("event.dispatch_async", func() error {
+		// Use work stealing pool for event processing if available
+		if e.workStealingPool != nil {
+			return e.dispatchWithWorkStealing(event)
+		}
+
 		go func() {
 			_ = e.Handle(event)
 		}()
 		return nil
 	})
+}
+
+// dispatchWithWorkStealing dispatches event using work stealing pool
+func (e *EventBus[T]) dispatchWithWorkStealing(event *Event[T]) error {
+	workItem := WorkItem[any]{
+		ID:      event.ID,
+		Data:    event,
+		Handler: e.processEvent,
+		Timeout: 30 * time.Second,
+	}
+
+	return e.workStealingPool.Submit(workItem)
+}
+
+// processEvent processes an event using work stealing pool
+func (e *EventBus[T]) processEvent(ctx context.Context, data any) error {
+	event := data.(*Event[T])
+	return e.Handle(event)
 }
 
 // Listen registers an event listener

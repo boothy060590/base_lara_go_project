@@ -21,7 +21,7 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 	// Register goroutine-aware event dispatcher that works with existing events
 	container.Singleton("goroutine.event_dispatcher", func() (any, error) {
 		// Create a new event bus for goroutine optimization
-		eventBus := app_core.NewEventBus[any]()
+		eventBus := app_core.NewEventBus[any](nil, nil, nil)
 
 		// Create goroutine-aware dispatcher
 		goroutineManager := app_core.NewGoroutineManager[any](nil)
@@ -35,7 +35,8 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 		if err != nil {
 			// If no queue exists, create a new one
 			queue := app_core.NewSyncQueue[any]()
-			jobDispatcher := app_core.NewJobDispatcher[any](queue)
+			// Create job dispatcher
+			jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
 
 			// Create goroutine-aware dispatcher
 			goroutineManager := app_core.NewGoroutineManager[any](nil)
@@ -44,7 +45,8 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 
 		// Use existing queue
 		queue := queueInstance.(app_core.Queue[any])
-		jobDispatcher := app_core.NewJobDispatcher[any](queue)
+		// Create job dispatcher
+		jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
 
 		// Create goroutine-aware dispatcher
 		goroutineManager := app_core.NewGoroutineManager[any](nil)

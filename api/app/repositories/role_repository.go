@@ -12,7 +12,7 @@ type RoleRepository struct {
 	model *app_core.BaseModel[models.Role]
 }
 
-func NewRoleRepository(db *gorm.DB, cache app_core.Cache[models.Role]) *RoleRepository {
+func NewRoleRepository(db *gorm.DB, cache app_core.Cache[models.Role], wsp any, ca any, pgo any) *RoleRepository {
 	config := app_core.ModelConfig{
 		TableName: "roles",
 		Traits: app_core.ModelTraits{
@@ -23,8 +23,9 @@ func NewRoleRepository(db *gorm.DB, cache app_core.Cache[models.Role]) *RoleRepo
 		CacheTTL:    30 * time.Minute,
 		CachePrefix: "role",
 	}
+
 	return &RoleRepository{
-		model: app_core.NewBaseModel[models.Role](db, cache, config),
+		model: app_core.NewBaseModel[models.Role](db, cache, config, wsp, ca, pgo),
 	}
 }
 

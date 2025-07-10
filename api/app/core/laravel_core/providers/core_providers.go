@@ -48,6 +48,11 @@ func (p *CoreServiceProvider) Register(container *app_core.Container) error {
 		return err
 	}
 
+	// Register optimization services
+	if err := p.registerOptimizationServices(container); err != nil {
+		return err
+	}
+
 	log.Printf("Core services registered successfully")
 	return nil
 }
@@ -84,7 +89,7 @@ func (p *CoreServiceProvider) registerDatabase(container *app_core.Container) er
 	return nil
 }
 
-// registerCache registers the cache system
+// registerCache registers the cache system with automatic context optimization
 func (p *CoreServiceProvider) registerCache(container *app_core.Container) error {
 	cacheConfig := config.CacheConfig()
 
@@ -103,35 +108,88 @@ func (p *CoreServiceProvider) registerCache(container *app_core.Container) error
 		cache = app_core.NewLocalCache[any]()
 	}
 
-	// Register cache as singleton
+	// Create context-aware cache (automatic optimization)
+	contextManager := app_core.NewContextManager(app_core.DefaultContextConfig())
+	contextAwareCache := app_core.NewContextAwareCache[any](cache, contextManager)
+
+	// Register both the original and context-aware versions
 	container.Singleton("cache", func() (any, error) {
 		return cache, nil
 	})
 
+	// Register context-aware version as the primary cache
+	container.Singleton("cache.context_aware", func() (any, error) {
+		return contextAwareCache, nil
+	})
+
 	// Register typed cache instances for all models
 	container.Singleton("cache.user", func() (any, error) {
-		return app_core.NewLocalCache[any](), nil
+		userCache := app_core.NewLocalCache[any]()
+		return app_core.NewContextAwareCache[any](userCache, contextManager), nil
 	})
 
 	container.Singleton("cache.session", func() (any, error) {
-		return app_core.NewLocalCache[any](), nil
+		sessionCache := app_core.NewLocalCache[any]()
+		return app_core.NewContextAwareCache[any](sessionCache, contextManager), nil
 	})
 
 	return nil
 }
 
-// registerEventSystem registers the event system
+// registerEventSystem registers the event system with automatic context optimization
 func (p *CoreServiceProvider) registerEventSystem(container *app_core.Container) error {
-	// Create event bus and store
-	eventBus := app_core.NewEventBus[any]()
+	// Resolve optimization singletons
+	wspInstance, _ := container.Resolve("optimization.work_stealing")
+	caInstance, _ := container.Resolve("optimization.custom_allocator")
+	pgoInstance, _ := container.Resolve("optimization.profile_guided")
+
+	// Type assertions
+	var wsp *app_core.WorkStealingPool[any]
+	var ca *app_core.CustomAllocator[any]
+	var pgo *app_core.ProfileGuidedOptimizer[any]
+
+	if wspInstance != nil {
+		wsp = wspInstance.(*app_core.WorkStealingPool[any])
+	}
+	if caInstance != nil {
+		ca = caInstance.(*app_core.CustomAllocator[any])
+	}
+	if pgoInstance != nil {
+		pgo = pgoInstance.(*app_core.ProfileGuidedOptimizer[any])
+	}
+
+	// Create event bus and store with optimizations
+	eventBus := app_core.NewEventBus[any](wsp, ca, pgo)
 	eventStore := app_core.NewMemoryEventStore[any]()
 
 	// Create event manager
 	eventManager := app_core.NewEventManager[any](eventBus, eventStore)
 
-	// Register event manager as singleton
+	// Get goroutine manager and context config for unified optimized dispatcher
+	goroutineManagerInstance, _ := container.Resolve("goroutine.manager")
+	contextConfigInstance, _ := container.Resolve("context.config")
+
+	var gm *app_core.GoroutineManager[any]
+	var cc *app_core.ContextConfig
+
+	if goroutineManagerInstance != nil {
+		gm = goroutineManagerInstance.(*app_core.GoroutineManager[any])
+	}
+	if contextConfigInstance != nil {
+		cc = contextConfigInstance.(*app_core.ContextConfig)
+	}
+
+	// Create unified optimized event dispatcher
+	optimizedEventDispatcher := app_core.NewOptimizedEventDispatcher[any](eventManager, gm, cc)
+
+	// Register both the original and optimized versions
 	container.Singleton("event_manager", func() (any, error) {
 		return eventManager, nil
+	})
+
+	// Register optimized version as the primary event dispatcher
+	container.Singleton("event_dispatcher", func() (any, error) {
+		return optimizedEventDispatcher, nil
 	})
 
 	return nil
@@ -165,10 +223,32 @@ func (p *CoreServiceProvider) registerQueueSystem(container *app_core.Container)
 
 // registerMailSystem registers the mail system
 func (p *CoreServiceProvider) registerMailSystem(container *app_core.Container) error {
-	// TODO: Implement mail service registration
-	// For now, we'll use a placeholder
+	// Resolve optimization singletons
+	wspInstance, _ := container.Resolve("optimization.work_stealing")
+	caInstance, _ := container.Resolve("optimization.custom_allocator")
+	pgoInstance, _ := container.Resolve("optimization.profile_guided")
+
+	// Type assertions
+	var wsp *app_core.WorkStealingPool[any]
+	var ca *app_core.CustomAllocator[any]
+	var pgo *app_core.ProfileGuidedOptimizer[any]
+
+	if wspInstance != nil {
+		wsp = wspInstance.(*app_core.WorkStealingPool[any])
+	}
+	if caInstance != nil {
+		ca = caInstance.(*app_core.CustomAllocator[any])
+	}
+	if pgoInstance != nil {
+		pgo = pgoInstance.(*app_core.ProfileGuidedOptimizer[any])
+	}
+
+	// Create mailer with optimizations
+	mailer := app_core.NewSMTPMailer[any]("localhost", 587, "", "", "noreply@example.com", wsp, ca, pgo)
+
+	// Register mailer as singleton
 	container.Singleton("mail", func() (any, error) {
-		return nil, nil
+		return mailer, nil
 	})
 
 	return nil
@@ -185,7 +265,7 @@ func (p *CoreServiceProvider) registerLoggingSystem(container *app_core.Containe
 	return nil
 }
 
-// registerJobSystem registers the job system
+// registerJobSystem registers the job system with automatic context optimization
 func (p *CoreServiceProvider) registerJobSystem(container *app_core.Container) error {
 	// Get queue from container
 	queueInstance, err := container.Resolve("queue")
@@ -195,13 +275,59 @@ func (p *CoreServiceProvider) registerJobSystem(container *app_core.Container) e
 
 	queue := queueInstance.(app_core.Queue[any])
 
-	// Create job dispatcher
-	jobDispatcher := app_core.NewJobDispatcher[any](queue)
+	// Resolve optimization singletons
+	wspInstance, _ := container.Resolve("optimization.work_stealing")
+	caInstance, _ := container.Resolve("optimization.custom_allocator")
+	pgoInstance, _ := container.Resolve("optimization.profile_guided")
 
-	// Register job dispatcher as singleton
+	// Type assertions
+	var wsp *app_core.WorkStealingPool[any]
+	var ca *app_core.CustomAllocator[any]
+	var pgo *app_core.ProfileGuidedOptimizer[any]
+
+	if wspInstance != nil {
+		wsp = wspInstance.(*app_core.WorkStealingPool[any])
+	}
+	if caInstance != nil {
+		ca = caInstance.(*app_core.CustomAllocator[any])
+	}
+	if pgoInstance != nil {
+		pgo = pgoInstance.(*app_core.ProfileGuidedOptimizer[any])
+	}
+
+	// Create job dispatcher with optimizations
+	jobDispatcher := app_core.NewJobDispatcher[any](queue, wsp, ca, pgo)
+
+	// Create context-aware job dispatcher (automatic optimization)
+	contextAwareJobDispatcher := app_core.NewContextAwareJobDispatcher[any](jobDispatcher)
+
+	// Register both the original and context-aware versions
 	container.Singleton("job.dispatcher", func() (any, error) {
 		return jobDispatcher, nil
 	})
+
+	// Register context-aware version as the primary job dispatcher
+	container.Singleton("job_dispatcher", func() (any, error) {
+		return contextAwareJobDispatcher, nil
+	})
+
+	return nil
+}
+
+// registerOptimizationServices registers optimization services
+func (p *CoreServiceProvider) registerOptimizationServices(container *app_core.Container) error {
+	// Create optimization service provider
+	optimizationProvider := &OptimizationServiceProvider{}
+
+	// Register optimization services
+	if err := optimizationProvider.Register(container); err != nil {
+		return err
+	}
+
+	// Boot optimization services
+	if err := optimizationProvider.Boot(container); err != nil {
+		return err
+	}
 
 	return nil
 }
