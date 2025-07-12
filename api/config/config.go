@@ -55,10 +55,11 @@ func Has(key string) bool {
 	return loader.Has(key)
 }
 
-// Set sets a configuration value (read-only system, no-op)
-// This is a read-only config system, so Set operations are ignored
+// Set sets a configuration value using dot notation
+// Examples: config.Set("app.name", "MyApp"), config.Set("database.host", "localhost")
 func Set(key string, value interface{}) {
-	// This is a read-only config system, so Set is a no-op
+	loader := GetConfigLoader()
+	loader.Set(key, value)
 }
 
 // Load loads a specific configuration file by name

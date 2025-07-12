@@ -20,16 +20,22 @@ func RegisterGlobalConfig(configName string, configFunc func() map[string]interf
 	globalFuncMap[configName] = configFunc
 }
 
+// ClearGlobalConfigs clears all registered global configs (mainly for testing)
+func ClearGlobalConfigs() {
+	globalFuncMapMu.Lock()
+	defer globalFuncMapMu.Unlock()
+	globalFuncMap = make(map[string]func() map[string]interface{})
+	// Reset the global loader to force recreation
+	globalConfigLoader = nil
+	globalLoaderOnce = sync.Once{}
+}
+
 // GetGlobalConfigLoader returns the global config loader instance
 func GetGlobalConfigLoader() *ConfigLoader {
 	globalLoaderOnce.Do(func() {
 		globalConfigLoader = NewConfigLoader("api/config")
-		// Register all global configs
-		globalFuncMapMu.RLock()
-		for name, fn := range globalFuncMap {
-			globalConfigLoader.RegisterConfig(name, fn)
-		}
-		globalFuncMapMu.RUnlock()
+		// Note: We don't register global configs here anymore since they're checked dynamically
+		// in loadDynamicConfig to handle late registrations
 	})
 	return globalConfigLoader
 }
@@ -69,6 +75,9 @@ func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) 
 	cl.mu.RLock()
 	if cached, exists := cl.cache[configName]; exists {
 		cl.mu.RUnlock()
+		if cached != nil && len(cached) == 0 {
+			return nil, nil
+		}
 		return cached, nil
 	}
 	cl.mu.RUnlock()
@@ -78,6 +87,9 @@ func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) 
 
 	// Double-check after acquiring write lock
 	if cached, exists := cl.cache[configName]; exists {
+		if cached != nil && len(cached) == 0 {
+			return nil, nil
+		}
 		return cached, nil
 	}
 
@@ -86,8 +98,10 @@ func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) 
 	if err != nil {
 		return nil, err
 	}
-
-	cl.cache[configName] = config
+	if config != nil && len(config) > 0 {
+		cl.cache[configName] = config
+	}
+	// Do not cache nil or empty configs
 	return config, nil
 }
 
@@ -95,8 +109,37 @@ func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) 
 func (cl *ConfigLoader) loadDynamicConfig(configName string) (map[string]interface{}, error) {
 	// Check if we have a registered config function
 	if configFunc, exists := cl.funcMap[configName]; exists {
-		return configFunc(), nil
+		result := configFunc()
+		// Ensure we don't return empty maps - convert to nil
+		if len(result) == 0 {
+			return nil, nil
+		}
+		return result, nil
 	}
+
+	// Debug: Check if there are any global configs that might be interfering
+	globalFuncMapMu.RLock()
+	globalFuncCount := len(globalFuncMap)
+	globalFuncMapMu.RUnlock()
+
+	// If no registered config function and no global configs, return nil
+	if globalFuncCount == 0 {
+		return nil, nil
+	}
+
+	// Check global configs
+	globalFuncMapMu.RLock()
+	if globalConfigFunc, exists := globalFuncMap[configName]; exists {
+		globalFuncMapMu.RUnlock()
+		result := globalConfigFunc()
+		// Ensure we don't return empty maps - convert to nil
+		if len(result) == 0 {
+			return nil, nil
+		}
+		return result, nil
+	}
+	globalFuncMapMu.RUnlock()
+
 	return nil, nil
 }
 
@@ -204,7 +247,8 @@ func (cl *ConfigLoader) GetBool(key string, defaultValue ...bool) bool {
 
 // Has checks if a configuration key exists
 func (cl *ConfigLoader) Has(key string) bool {
-	return cl.Get(key) != nil
+	val := cl.Get(key)
+	return val != nil
 }
 
 // ClearCache clears the configuration cache
@@ -217,23 +261,105 @@ func (cl *ConfigLoader) ClearCache() {
 // Reload reloads a specific configuration
 func (cl *ConfigLoader) Reload(configName string) error {
 	cl.mu.Lock()
-	defer cl.mu.Unlock()
 	delete(cl.cache, configName)
+	cl.mu.Unlock()
+	return cl.LoadAndIgnore(configName)
+}
+
+// LoadAndIgnore calls Load and returns only the error
+func (cl *ConfigLoader) LoadAndIgnore(configName string) error {
 	_, err := cl.Load(configName)
 	return err
+}
+
+// Set sets a configuration value using dot notation
+func (cl *ConfigLoader) Set(key string, value interface{}) {
+	parts := strings.Split(key, ".")
+	if len(parts) < 2 {
+		return // Need at least config name and key
+	}
+
+	configName := parts[0]
+	configKey := strings.Join(parts[1:], ".")
+
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+
+	// Get or create the config map without calling Load()
+	var configMap map[string]interface{}
+
+	// Check if config exists in cache
+	if cached, exists := cl.cache[configName]; exists {
+		configMap = cached
+	} else {
+		// Check if we have a registered config function
+		if configFunc, exists := cl.funcMap[configName]; exists {
+			configMap = configFunc()
+		} else {
+			// Check global configs
+			globalFuncMapMu.RLock()
+			if globalConfigFunc, exists := globalFuncMap[configName]; exists {
+				configMap = globalConfigFunc()
+			}
+			globalFuncMapMu.RUnlock()
+		}
+
+		// If still nil, create a new map
+		if configMap == nil {
+			configMap = make(map[string]interface{})
+		}
+
+		// Cache the config map
+		cl.cache[configName] = configMap
+	}
+
+	// Navigate through the config map and set the value
+	current := configMap
+	keyParts := strings.Split(configKey, ".")
+
+	for i, part := range keyParts {
+		if i == len(keyParts)-1 {
+			// This is the final key, set the value
+			current[part] = value
+			return
+		}
+
+		// Navigate to the next level
+		if val, exists := current[part]; exists {
+			if mapVal, isMap := val.(map[string]interface{}); isMap {
+				current = mapVal
+			} else {
+				// Replace non-map value with a new map
+				newMap := make(map[string]interface{})
+				current[part] = newMap
+				current = newMap
+			}
+		} else {
+			// Create new map for this level
+			newMap := make(map[string]interface{})
+			current[part] = newMap
+			current = newMap
+		}
+	}
 }
 
 // ListAvailableConfigs returns a list of available configuration files
 func (cl *ConfigLoader) ListAvailableConfigs() []string {
 	var configs []string
 
-	// Return all discovered config names
+	// Return all discovered config names from local funcMap
 	cl.mu.RLock()
-	defer cl.mu.RUnlock()
-
 	for configName := range cl.funcMap {
 		configs = append(configs, configName)
 	}
+	cl.mu.RUnlock()
+
+	// Also include global configs
+	globalFuncMapMu.RLock()
+	for configName := range globalFuncMap {
+		configs = append(configs, configName)
+	}
+	globalFuncMapMu.RUnlock()
 
 	return configs
 }
