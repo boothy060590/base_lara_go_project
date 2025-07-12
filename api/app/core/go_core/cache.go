@@ -19,10 +19,21 @@ type Cache[T any] interface {
 	Delete(key string) error
 	Has(key string) (bool, error)
 
+	// Context-aware basic operations
+	GetWithContext(ctx context.Context, key string) (*T, error)
+	SetWithContext(ctx context.Context, key string, value *T, ttl time.Duration) error
+	DeleteWithContext(ctx context.Context, key string) error
+	HasWithContext(ctx context.Context, key string) (bool, error)
+
 	// Advanced operations
 	GetOrSet(key string, factory func() (*T, error), ttl time.Duration) (*T, error)
 	Increment(key string, value int64) (int64, error)
 	Decrement(key string, value int64) (int64, error)
+
+	// Context-aware advanced operations
+	GetOrSetWithContext(ctx context.Context, key string, factory func() (*T, error), ttl time.Duration) (*T, error)
+	IncrementWithContext(ctx context.Context, key string, value int64) (int64, error)
+	DecrementWithContext(ctx context.Context, key string, value int64) (int64, error)
 
 	// Batch operations
 	GetMany(keys []string) (map[string]*T, error)
@@ -30,8 +41,15 @@ type Cache[T any] interface {
 	DeleteMany(keys []string) error
 	DeletePattern(pattern string) error
 
+	// Context-aware batch operations
+	GetManyWithContext(ctx context.Context, keys []string) (map[string]*T, error)
+	SetManyWithContext(ctx context.Context, values map[string]*T, ttl time.Duration) error
+	DeleteManyWithContext(ctx context.Context, keys []string) error
+	DeletePatternWithContext(ctx context.Context, pattern string) error
+
 	// Utility operations
 	Flush() error
+	FlushWithContext(ctx context.Context) error
 	WithContext(ctx context.Context) Cache[T]
 
 	// Performance operations
@@ -79,12 +97,17 @@ func NewRedisCache[T any](client *redis.Client) Cache[T] {
 
 // Get retrieves a value from cache with performance tracking and atomic counter
 func (c *redisCache[T]) Get(key string) (*T, error) {
+	return c.GetWithContext(c.ctx, key)
+}
+
+// GetWithContext retrieves a value from cache with context support
+func (c *redisCache[T]) GetWithContext(ctx context.Context, key string) (*T, error) {
 	// Track operation count atomically
 	c.atomicCounter.Increment()
 
 	var result *T
 	err := c.performanceFacade.Track("cache.get", func() error {
-		data, err := c.client.Get(c.ctx, key).Bytes()
+		data, err := c.client.Get(ctx, key).Bytes()
 		if err != nil {
 			if err == redis.Nil {
 				return nil // Key not found
@@ -107,6 +130,11 @@ func (c *redisCache[T]) Get(key string) (*T, error) {
 
 // Set stores a value in cache with performance tracking and atomic counter
 func (c *redisCache[T]) Set(key string, value *T, ttl time.Duration) error {
+	return c.SetWithContext(c.ctx, key, value, ttl)
+}
+
+// SetWithContext stores a value in cache with context support
+func (c *redisCache[T]) SetWithContext(ctx context.Context, key string, value *T, ttl time.Duration) error {
 	// Track operation count atomically
 	c.atomicCounter.Increment()
 
@@ -116,25 +144,40 @@ func (c *redisCache[T]) Set(key string, value *T, ttl time.Duration) error {
 			return fmt.Errorf("failed to marshal cache value: %w", err)
 		}
 
-		return c.client.Set(c.ctx, key, data, ttl).Err()
+		return c.client.Set(ctx, key, data, ttl).Err()
 	})
 }
 
 // Delete removes a value from cache
 func (c *redisCache[T]) Delete(key string) error {
-	return c.client.Del(c.ctx, key).Err()
+	return c.DeleteWithContext(c.ctx, key)
+}
+
+// DeleteWithContext removes a value from cache with context support
+func (c *redisCache[T]) DeleteWithContext(ctx context.Context, key string) error {
+	return c.client.Del(ctx, key).Err()
 }
 
 // Has checks if a key exists in cache
 func (c *redisCache[T]) Has(key string) (bool, error) {
-	exists, err := c.client.Exists(c.ctx, key).Result()
+	return c.HasWithContext(c.ctx, key)
+}
+
+// HasWithContext checks if a key exists in cache with context support
+func (c *redisCache[T]) HasWithContext(ctx context.Context, key string) (bool, error) {
+	exists, err := c.client.Exists(ctx, key).Result()
 	return exists > 0, err
 }
 
 // GetOrSet retrieves a value or sets it using a factory function
 func (c *redisCache[T]) GetOrSet(key string, factory func() (*T, error), ttl time.Duration) (*T, error) {
+	return c.GetOrSetWithContext(c.ctx, key, factory, ttl)
+}
+
+// GetOrSetWithContext retrieves a value or sets it using a factory function with context support
+func (c *redisCache[T]) GetOrSetWithContext(ctx context.Context, key string, factory func() (*T, error), ttl time.Duration) (*T, error) {
 	// Try to get from cache first
-	if value, err := c.Get(key); err != nil {
+	if value, err := c.GetWithContext(ctx, key); err != nil {
 		return nil, err
 	} else if value != nil {
 		return value, nil
@@ -147,7 +190,7 @@ func (c *redisCache[T]) GetOrSet(key string, factory func() (*T, error), ttl tim
 	}
 
 	// Store in cache
-	err = c.Set(key, value, ttl)
+	err = c.SetWithContext(ctx, key, value, ttl)
 	if err != nil {
 		// Log error but return value anyway
 		// TODO: Add proper logging
@@ -158,22 +201,37 @@ func (c *redisCache[T]) GetOrSet(key string, factory func() (*T, error), ttl tim
 
 // Increment increments a numeric value
 func (c *redisCache[T]) Increment(key string, value int64) (int64, error) {
-	return c.client.IncrBy(c.ctx, key, value).Result()
+	return c.IncrementWithContext(c.ctx, key, value)
+}
+
+// IncrementWithContext increments a numeric value with context support
+func (c *redisCache[T]) IncrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	return c.client.IncrBy(ctx, key, value).Result()
 }
 
 // Decrement decrements a numeric value
 func (c *redisCache[T]) Decrement(key string, value int64) (int64, error) {
-	return c.client.DecrBy(c.ctx, key, value).Result()
+	return c.DecrementWithContext(c.ctx, key, value)
+}
+
+// DecrementWithContext decrements a numeric value with context support
+func (c *redisCache[T]) DecrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	return c.client.DecrBy(ctx, key, value).Result()
 }
 
 // GetMany retrieves multiple values from cache
 func (c *redisCache[T]) GetMany(keys []string) (map[string]*T, error) {
+	return c.GetManyWithContext(c.ctx, keys)
+}
+
+// GetManyWithContext retrieves multiple values from cache with context support
+func (c *redisCache[T]) GetManyWithContext(ctx context.Context, keys []string) (map[string]*T, error) {
 	if len(keys) == 0 {
 		return make(map[string]*T), nil
 	}
 
 	// Get all keys at once
-	results, err := c.client.MGet(c.ctx, keys...).Result()
+	results, err := c.client.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -204,6 +262,11 @@ func (c *redisCache[T]) GetMany(keys []string) (map[string]*T, error) {
 
 // SetMany stores multiple values in cache
 func (c *redisCache[T]) SetMany(values map[string]*T, ttl time.Duration) error {
+	return c.SetManyWithContext(c.ctx, values, ttl)
+}
+
+// SetManyWithContext stores multiple values in cache with context support
+func (c *redisCache[T]) SetManyWithContext(ctx context.Context, values map[string]*T, ttl time.Duration) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -217,29 +280,39 @@ func (c *redisCache[T]) SetMany(values map[string]*T, ttl time.Duration) error {
 			return fmt.Errorf("failed to marshal value for key %s: %w", key, err)
 		}
 
-		pipe.Set(c.ctx, key, data, ttl)
+		pipe.Set(ctx, key, data, ttl)
 	}
 
 	// Execute pipeline
-	_, err := pipe.Exec(c.ctx)
+	_, err := pipe.Exec(ctx)
 	return err
 }
 
 // DeleteMany removes multiple values from cache
 func (c *redisCache[T]) DeleteMany(keys []string) error {
+	return c.DeleteManyWithContext(c.ctx, keys)
+}
+
+// DeleteManyWithContext removes multiple values from cache with context support
+func (c *redisCache[T]) DeleteManyWithContext(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
-	return c.client.Del(c.ctx, keys...).Err()
+	return c.client.Del(ctx, keys...).Err()
 }
 
 // DeletePattern removes all keys matching a pattern
 func (c *redisCache[T]) DeletePattern(pattern string) error {
+	return c.DeletePatternWithContext(c.ctx, pattern)
+}
+
+// DeletePatternWithContext removes all keys matching a pattern with context support
+func (c *redisCache[T]) DeletePatternWithContext(ctx context.Context, pattern string) error {
 	// Scan for keys matching pattern
 	var keys []string
-	iter := c.client.Scan(c.ctx, 0, pattern, 0).Iterator()
-	for iter.Next(c.ctx) {
+	iter := c.client.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
 	}
 	if err := iter.Err(); err != nil {
@@ -248,15 +321,20 @@ func (c *redisCache[T]) DeletePattern(pattern string) error {
 
 	// Delete all matching keys
 	if len(keys) > 0 {
-		return c.client.Del(c.ctx, keys...).Err()
+		return c.client.Del(ctx, keys...).Err()
 	}
 
 	return nil
 }
 
-// Flush clears all cache entries
+// Flush clears all values from cache
 func (c *redisCache[T]) Flush() error {
-	return c.client.FlushDB(c.ctx).Err()
+	return c.FlushWithContext(c.ctx)
+}
+
+// FlushWithContext clears all values from cache with context support
+func (c *redisCache[T]) FlushWithContext(ctx context.Context) error {
+	return c.client.FlushAll(ctx).Err()
 }
 
 // GetPerformanceStats returns cache performance statistics
@@ -325,6 +403,18 @@ func NewLocalCache[T any]() Cache[T] {
 
 // Get retrieves a value from local cache
 func (c *localCache[T]) Get(key string) (*T, error) {
+	return c.GetWithContext(c.ctx, key)
+}
+
+// GetWithContext retrieves a value from local cache with context support
+func (c *localCache[T]) GetWithContext(ctx context.Context, key string) (*T, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -349,6 +439,18 @@ func (c *localCache[T]) Get(key string) (*T, error) {
 
 // Set stores a value in local cache
 func (c *localCache[T]) Set(key string, value *T, ttl time.Duration) error {
+	return c.SetWithContext(c.ctx, key, value, ttl)
+}
+
+// SetWithContext stores a value in local cache with context support
+func (c *localCache[T]) SetWithContext(ctx context.Context, key string, value *T, ttl time.Duration) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -367,6 +469,18 @@ func (c *localCache[T]) Set(key string, value *T, ttl time.Duration) error {
 
 // Delete removes a value from local cache
 func (c *localCache[T]) Delete(key string) error {
+	return c.DeleteWithContext(c.ctx, key)
+}
+
+// DeleteWithContext removes a value from local cache with context support
+func (c *localCache[T]) DeleteWithContext(ctx context.Context, key string) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -376,6 +490,18 @@ func (c *localCache[T]) Delete(key string) error {
 
 // Has checks if a key exists in local cache
 func (c *localCache[T]) Has(key string) (bool, error) {
+	return c.HasWithContext(c.ctx, key)
+}
+
+// HasWithContext checks if a key exists in local cache with context support
+func (c *localCache[T]) HasWithContext(ctx context.Context, key string) (bool, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -400,8 +526,13 @@ func (c *localCache[T]) Has(key string) (bool, error) {
 
 // GetOrSet retrieves a value or sets it using a factory function
 func (c *localCache[T]) GetOrSet(key string, factory func() (*T, error), ttl time.Duration) (*T, error) {
+	return c.GetOrSetWithContext(c.ctx, key, factory, ttl)
+}
+
+// GetOrSetWithContext retrieves a value or sets it using a factory function with context support
+func (c *localCache[T]) GetOrSetWithContext(ctx context.Context, key string, factory func() (*T, error), ttl time.Duration) (*T, error) {
 	// Try to get from cache first
-	if value, err := c.Get(key); err != nil {
+	if value, err := c.GetWithContext(ctx, key); err != nil {
 		return nil, err
 	} else if value != nil {
 		return value, nil
@@ -414,7 +545,7 @@ func (c *localCache[T]) GetOrSet(key string, factory func() (*T, error), ttl tim
 	}
 
 	// Store in cache
-	err = c.Set(key, value, ttl)
+	err = c.SetWithContext(ctx, key, value, ttl)
 	if err != nil {
 		// Log error but return value anyway
 		// TODO: Add proper logging
@@ -425,6 +556,18 @@ func (c *localCache[T]) GetOrSet(key string, factory func() (*T, error), ttl tim
 
 // Increment increments a numeric value
 func (c *localCache[T]) Increment(key string, value int64) (int64, error) {
+	return c.IncrementWithContext(c.ctx, key, value)
+}
+
+// IncrementWithContext increments a numeric value with context support
+func (c *localCache[T]) IncrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -477,6 +620,18 @@ func (c *localCache[T]) Increment(key string, value int64) (int64, error) {
 
 // Decrement decrements a numeric value
 func (c *localCache[T]) Decrement(key string, value int64) (int64, error) {
+	return c.DecrementWithContext(c.ctx, key, value)
+}
+
+// DecrementWithContext decrements a numeric value with context support
+func (c *localCache[T]) DecrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -529,14 +684,38 @@ func (c *localCache[T]) Decrement(key string, value int64) (int64, error) {
 
 // GetMany retrieves multiple values from local cache
 func (c *localCache[T]) GetMany(keys []string) (map[string]*T, error) {
-	values := make(map[string]*T)
+	return c.GetManyWithContext(c.ctx, keys)
+}
 
+// GetManyWithContext retrieves multiple values from local cache with context support
+func (c *localCache[T]) GetManyWithContext(ctx context.Context, keys []string) (map[string]*T, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if len(keys) == 0 {
+		return make(map[string]*T), nil
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	values := make(map[string]*T)
 	for _, key := range keys {
-		if value, err := c.Get(key); err != nil {
-			return nil, err
-		} else if value != nil {
-			values[key] = value
+		item, exists := c.data[key]
+		if !exists {
+			continue
 		}
+
+		// Check expiration
+		if !item.expiration.IsZero() && time.Now().After(item.expiration) {
+			continue
+		}
+
+		values[key] = item.value
 	}
 
 	return values, nil
@@ -544,10 +723,34 @@ func (c *localCache[T]) GetMany(keys []string) (map[string]*T, error) {
 
 // SetMany stores multiple values in local cache
 func (c *localCache[T]) SetMany(values map[string]*T, ttl time.Duration) error {
+	return c.SetManyWithContext(c.ctx, values, ttl)
+}
+
+// SetManyWithContext stores multiple values in local cache with context support
+func (c *localCache[T]) SetManyWithContext(ctx context.Context, values map[string]*T, ttl time.Duration) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if len(values) == 0 {
+		return nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var expiration time.Time
+	if ttl > 0 {
+		expiration = time.Now().Add(ttl)
+	}
+
 	for key, value := range values {
-		err := c.Set(key, value, ttl)
-		if err != nil {
-			return err
+		c.data[key] = cacheItem[T]{
+			value:      value,
+			expiration: expiration,
 		}
 	}
 
@@ -556,6 +759,22 @@ func (c *localCache[T]) SetMany(values map[string]*T, ttl time.Duration) error {
 
 // DeleteMany removes multiple values from local cache
 func (c *localCache[T]) DeleteMany(keys []string) error {
+	return c.DeleteManyWithContext(c.ctx, keys)
+}
+
+// DeleteManyWithContext removes multiple values from local cache with context support
+func (c *localCache[T]) DeleteManyWithContext(ctx context.Context, keys []string) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if len(keys) == 0 {
+		return nil
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -568,16 +787,53 @@ func (c *localCache[T]) DeleteMany(keys []string) error {
 
 // DeletePattern removes all keys matching a pattern
 func (c *localCache[T]) DeletePattern(pattern string) error {
+	return c.DeletePatternWithContext(c.ctx, pattern)
+}
+
+// DeletePatternWithContext removes all keys matching a pattern with context support
+func (c *localCache[T]) DeletePatternWithContext(ctx context.Context, pattern string) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Enhanced pattern matching for local cache
+	var keysToDelete []string
 	for key := range c.data {
 		if c.matchesPattern(key, pattern) {
-			delete(c.data, key)
+			keysToDelete = append(keysToDelete, key)
 		}
 	}
 
+	for _, key := range keysToDelete {
+		delete(c.data, key)
+	}
+
+	return nil
+}
+
+// Flush clears all values from local cache
+func (c *localCache[T]) Flush() error {
+	return c.FlushWithContext(c.ctx)
+}
+
+// FlushWithContext clears all values from local cache with context support
+func (c *localCache[T]) FlushWithContext(ctx context.Context) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.data = make(map[string]cacheItem[T])
 	return nil
 }
 
@@ -605,15 +861,6 @@ func (c *localCache[T]) matchesPattern(key, pattern string) bool {
 	}
 
 	return false
-}
-
-// Flush clears all cache entries
-func (c *localCache[T]) Flush() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.data = make(map[string]cacheItem[T])
-	return nil
 }
 
 // GetPerformanceStats returns local cache performance statistics

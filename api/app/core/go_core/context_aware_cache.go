@@ -139,3 +139,102 @@ func (cac *ContextAwareCache[T]) GetPerformanceStats(ctx context.Context) map[st
 
 	return <-resultChan
 }
+
+// GetManyWithContext retrieves multiple values with context awareness
+func (cac *ContextAwareCache[T]) GetManyWithContext(ctx context.Context, keys []string) (map[string]*T, error) {
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result map[string]*T
+		err    error
+	}, 1)
+
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.GetManyWithContext(ctx, keys)
+		resultChan <- struct {
+			result map[string]*T
+			err    error
+		}{result, err}
+		return err
+	})
+
+	if execErr != nil {
+		return nil, execErr
+	}
+
+	result := <-resultChan
+	return result.result, result.err
+}
+
+// SetManyWithContext stores multiple values with context awareness
+func (cac *ContextAwareCache[T]) SetManyWithContext(ctx context.Context, values map[string]*T, ttl time.Duration) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		return cac.cache.SetManyWithContext(ctx, values, ttl)
+	})
+}
+
+// DeleteManyWithContext removes multiple values with context awareness
+func (cac *ContextAwareCache[T]) DeleteManyWithContext(ctx context.Context, keys []string) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		return cac.cache.DeleteManyWithContext(ctx, keys)
+	})
+}
+
+// DeletePatternWithContext removes all keys matching a pattern with context awareness
+func (cac *ContextAwareCache[T]) DeletePatternWithContext(ctx context.Context, pattern string) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		return cac.cache.DeletePatternWithContext(ctx, pattern)
+	})
+}
+
+// IncrementWithContext increments a numeric value with context awareness
+func (cac *ContextAwareCache[T]) IncrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result int64
+		err    error
+	}, 1)
+
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.IncrementWithContext(ctx, key, value)
+		resultChan <- struct {
+			result int64
+			err    error
+		}{result, err}
+		return err
+	})
+
+	if execErr != nil {
+		return 0, execErr
+	}
+
+	result := <-resultChan
+	return result.result, result.err
+}
+
+// DecrementWithContext decrements a numeric value with context awareness
+func (cac *ContextAwareCache[T]) DecrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result int64
+		err    error
+	}, 1)
+
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.DecrementWithContext(ctx, key, value)
+		resultChan <- struct {
+			result int64
+			err    error
+		}{result, err}
+		return err
+	})
+
+	if execErr != nil {
+		return 0, execErr
+	}
+
+	result := <-resultChan
+	return result.result, result.err
+}

@@ -9,6 +9,7 @@ import (
 
 	go_core "base_lara_go_project/app/core/go_core"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -433,4 +434,363 @@ func TestCacheMemoryLeaks(t *testing.T) {
 	results, err := cache.GetMany([]string{"memory_key_0", "memory_key_1", "memory_key_2"})
 	require.NoError(t, err, "GetMany should not return error")
 	require.Empty(t, results, "Cache should be empty after deletion and flush")
+}
+
+// TestCacheContextCancellation tests context cancellation for all operations
+func TestCacheContextCancellation(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	// Test GetWithContext cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := cache.GetWithContext(ctx, "test")
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test SetWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.SetWithContext(ctx, "test", stringPtr("value"), time.Minute)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test DeleteWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.DeleteWithContext(ctx, "test")
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test HasWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = cache.HasWithContext(ctx, "test")
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test GetOrSetWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = cache.GetOrSetWithContext(ctx, "test", func() (*string, error) {
+		return stringPtr("value"), nil
+	}, time.Minute)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test IncrementWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = cache.IncrementWithContext(ctx, "test", 1)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test DecrementWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = cache.DecrementWithContext(ctx, "test", 1)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test GetManyWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err = cache.GetManyWithContext(ctx, []string{"test1", "test2"})
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test SetManyWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.SetManyWithContext(ctx, map[string]*string{"test": stringPtr("value")}, time.Minute)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test DeleteManyWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.DeleteManyWithContext(ctx, []string{"test1", "test2"})
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test DeletePatternWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.DeletePatternWithContext(ctx, "test*")
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Test FlushWithContext cancellation
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	err = cache.FlushWithContext(ctx)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+}
+
+// TestCacheContextTimeout tests context timeout for all operations
+func TestCacheContextTimeout(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	// Test GetWithContext timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	time.Sleep(1 * time.Millisecond) // Ensure timeout
+
+	_, err := cache.GetWithContext(ctx, "test")
+	assert.Error(t, err)
+	assert.Equal(t, context.DeadlineExceeded, err)
+
+	// Test SetWithContext timeout
+	ctx, cancel = context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	time.Sleep(1 * time.Millisecond) // Ensure timeout
+
+	err = cache.SetWithContext(ctx, "test", stringPtr("value"), time.Minute)
+	assert.Error(t, err)
+	assert.Equal(t, context.DeadlineExceeded, err)
+}
+
+// TestCacheContextRaceConditions tests race conditions with context-aware operations
+func TestCacheContextRaceConditions(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+	var wg sync.WaitGroup
+	numGoroutines := 100
+
+	// Test concurrent GetWithContext operations
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			ctx := context.Background()
+			key := fmt.Sprintf("key-%d", id)
+			_, _ = cache.GetWithContext(ctx, key)
+		}(i)
+	}
+	wg.Wait()
+
+	// Test concurrent SetWithContext operations
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			ctx := context.Background()
+			key := fmt.Sprintf("key-%d", id)
+			_ = cache.SetWithContext(ctx, key, stringPtr(fmt.Sprintf("value-%d", id)), time.Minute)
+		}(i)
+	}
+	wg.Wait()
+
+	// Test concurrent GetWithContext and SetWithContext operations
+	wg.Add(numGoroutines * 2)
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			ctx := context.Background()
+			key := fmt.Sprintf("race-key-%d", id)
+			_, _ = cache.GetWithContext(ctx, key)
+		}(i)
+		go func(id int) {
+			defer wg.Done()
+			ctx := context.Background()
+			key := fmt.Sprintf("race-key-%d", id)
+			_ = cache.SetWithContext(ctx, key, stringPtr(fmt.Sprintf("race-value-%d", id)), time.Minute)
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify no data races occurred
+	ctx := context.Background()
+	for i := 0; i < numGoroutines; i++ {
+		key := fmt.Sprintf("race-key-%d", i)
+		value, err := cache.GetWithContext(ctx, key)
+		assert.NoError(t, err)
+		assert.NotNil(t, value)
+		assert.Equal(t, fmt.Sprintf("race-value-%d", i), *value)
+	}
+}
+
+// TestCacheContextMixedOperations tests mixing context-aware and non-context operations
+func TestCacheContextMixedOperations(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	// Set using non-context method
+	err := cache.Set("test", stringPtr("value"), time.Minute)
+	assert.NoError(t, err)
+
+	// Get using context method
+	ctx := context.Background()
+	value, err := cache.GetWithContext(ctx, "test")
+	assert.NoError(t, err)
+	assert.Equal(t, "value", *value)
+
+	// Set using context method
+	err = cache.SetWithContext(ctx, "test2", stringPtr("value2"), time.Minute)
+	assert.NoError(t, err)
+
+	// Get using non-context method
+	value, err = cache.Get("test2")
+	assert.NoError(t, err)
+	assert.Equal(t, "value2", *value)
+}
+
+// TestCacheContextBatchOperations tests context-aware batch operations
+func TestCacheContextBatchOperations(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	// Test GetManyWithContext
+	ctx := context.Background()
+	keys := []string{"batch1", "batch2", "batch3"}
+	values := map[string]*string{
+		"batch1": stringPtr("value1"),
+		"batch2": stringPtr("value2"),
+		"batch3": stringPtr("value3"),
+	}
+
+	// Set values
+	err := cache.SetManyWithContext(ctx, values, time.Minute)
+	assert.NoError(t, err)
+
+	// Get values
+	result, err := cache.GetManyWithContext(ctx, keys)
+	assert.NoError(t, err)
+	assert.Len(t, result, 3)
+	assert.Equal(t, "value1", *result["batch1"])
+	assert.Equal(t, "value2", *result["batch2"])
+	assert.Equal(t, "value3", *result["batch3"])
+
+	// Test DeleteManyWithContext
+	err = cache.DeleteManyWithContext(ctx, keys)
+	assert.NoError(t, err)
+
+	// Verify deletion
+	result, err = cache.GetManyWithContext(ctx, keys)
+	assert.NoError(t, err)
+	assert.Len(t, result, 0)
+}
+
+// TestCacheContextNumericOperations tests context-aware numeric operations
+func TestCacheContextNumericOperations(t *testing.T) {
+	cache := go_core.NewLocalCache[int64]()
+
+	ctx := context.Background()
+
+	// Test IncrementWithContext
+	value, err := cache.IncrementWithContext(ctx, "counter", 5)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), value)
+
+	value, err = cache.IncrementWithContext(ctx, "counter", 3)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(8), value)
+
+	// Test DecrementWithContext
+	value, err = cache.DecrementWithContext(ctx, "counter", 2)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(6), value)
+
+	// Verify final value
+	valuePtr, err := cache.GetWithContext(ctx, "counter")
+	assert.NoError(t, err)
+	assert.Equal(t, int64(6), *valuePtr)
+}
+
+// TestCacheContextPatternOperations tests context-aware pattern operations
+func TestCacheContextPatternOperations(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	ctx := context.Background()
+
+	// Set values with different patterns
+	values := map[string]*string{
+		"user:1": stringPtr("user1"),
+		"user:2": stringPtr("user2"),
+		"post:1": stringPtr("post1"),
+		"post:2": stringPtr("post2"),
+		"other":  stringPtr("other"),
+	}
+
+	err := cache.SetManyWithContext(ctx, values, time.Minute)
+	assert.NoError(t, err)
+
+	// Delete pattern "user:*"
+	err = cache.DeletePatternWithContext(ctx, "user:*")
+	assert.NoError(t, err)
+
+	// Verify only user keys were deleted
+	result, err := cache.GetManyWithContext(ctx, []string{"user:1", "user:2", "post:1", "post:2", "other"})
+	assert.NoError(t, err)
+	assert.Len(t, result, 3) // post:1, post:2, other should remain
+	assert.NotNil(t, result["post:1"])
+	assert.NotNil(t, result["post:2"])
+	assert.NotNil(t, result["other"])
+	assert.Nil(t, result["user:1"])
+	assert.Nil(t, result["user:2"])
+}
+
+// TestCacheContextFlush tests context-aware flush operation
+func TestCacheContextFlush(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	ctx := context.Background()
+
+	// Set some values
+	values := map[string]*string{
+		"key1": stringPtr("value1"),
+		"key2": stringPtr("value2"),
+		"key3": stringPtr("value3"),
+	}
+
+	err := cache.SetManyWithContext(ctx, values, time.Minute)
+	assert.NoError(t, err)
+
+	// Verify values exist
+	result, err := cache.GetManyWithContext(ctx, []string{"key1", "key2", "key3"})
+	assert.NoError(t, err)
+	assert.Len(t, result, 3)
+
+	// Flush with context
+	err = cache.FlushWithContext(ctx)
+	assert.NoError(t, err)
+
+	// Verify all values are gone
+	result, err = cache.GetManyWithContext(ctx, []string{"key1", "key2", "key3"})
+	assert.NoError(t, err)
+	assert.Len(t, result, 0)
+}
+
+// TestCacheContextWithCancellationDuringOperation tests context cancellation during long operations
+func TestCacheContextWithCancellationDuringOperation(t *testing.T) {
+	cache := go_core.NewLocalCache[string]()
+
+	// Set a value
+	err := cache.Set("test", stringPtr("value"), time.Minute)
+	assert.NoError(t, err)
+
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel the context immediately
+	cancel()
+
+	// Try to get the value - should fail due to cancellation
+	_, err = cache.GetWithContext(ctx, "test")
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
+
+	// Try to set a value - should fail due to cancellation
+	err = cache.SetWithContext(ctx, "test2", stringPtr("value2"), time.Minute)
+	assert.Error(t, err)
+	assert.Equal(t, context.Canceled, err)
 }
