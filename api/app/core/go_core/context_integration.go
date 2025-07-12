@@ -193,6 +193,23 @@ func (cm *ContextManager) ExecuteWithDeadline(ctx context.Context, deadline time
 	}
 }
 
+// ExecuteWithContext executes a function with context awareness (respects context cancellation)
+func (cm *ContextManager) ExecuteWithContext(ctx context.Context, fn func(context.Context) error) error {
+	// Create result channel
+	resultChan := make(chan error, 1)
+
+	go func() {
+		resultChan <- fn(ctx)
+	}()
+
+	select {
+	case err := <-resultChan:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("operation cancelled: %w", ctx.Err())
+	}
+}
+
 // ============================================================================
 // CONTEXT-AWARE INTERFACES
 // ============================================================================

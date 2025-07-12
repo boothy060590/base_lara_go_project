@@ -25,140 +25,117 @@ func NewContextAwareCache[T any](cache Cache[T], manager *ContextManager) *Conte
 
 // Get retrieves a value with context awareness
 func (cac *ContextAwareCache[T]) Get(ctx context.Context, key string) (*T, error) {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_get_start", time.Now())
-	ctx = context.WithValue(ctx, "cache_key", key)
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result *T
+		err    error
+	}, 1)
 
-	var result *T
-	var err error
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "cache") // TODO: Pass config map
-	err = cac.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		result, err = cac.cache.Get(key)
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.Get(key)
+		resultChan <- struct {
+			result *T
+			err    error
+		}{result, err}
 		return err
 	})
 
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_get_end", time.Now())
+	if execErr != nil {
+		return nil, execErr
+	}
 
-	return result, err
+	result := <-resultChan
+	return result.result, result.err
 }
 
 // Set stores a value with context awareness
 func (cac *ContextAwareCache[T]) Set(ctx context.Context, key string, value *T, ttl time.Duration) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_set_start", time.Now())
-	ctx = context.WithValue(ctx, "cache_key", key)
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "cache") // TODO: Pass config map
-	err := cac.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
 		return cac.cache.Set(key, value, ttl)
 	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_set_end", time.Now())
-
-	return err
 }
 
 // Delete removes a value with context awareness
 func (cac *ContextAwareCache[T]) Delete(ctx context.Context, key string) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_delete_start", time.Now())
-	ctx = context.WithValue(ctx, "cache_key", key)
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "cache") // TODO: Pass config map
-	err := cac.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
 		return cac.cache.Delete(key)
 	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_delete_end", time.Now())
-
-	return err
 }
 
 // Flush clears all values with context awareness
 func (cac *ContextAwareCache[T]) Flush(ctx context.Context) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_flush_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "cache") * 2 // Flush takes longer
-	err := cac.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
+	// Execute with context awareness (respect context cancellation)
+	return cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
 		return cac.cache.Flush()
 	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_flush_end", time.Now())
-
-	return err
 }
 
 // Has checks if a key exists with context awareness
 func (cac *ContextAwareCache[T]) Has(ctx context.Context, key string) (bool, error) {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_has_start", time.Now())
-	ctx = context.WithValue(ctx, "cache_key", key)
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result bool
+		err    error
+	}, 1)
 
-	var result bool
-	var err error
-
-	// Execute with automatic timeout
-	err = cac.manager.ExecuteWithTimeout(ctx, 5*time.Second, func(ctx context.Context) error {
-		result, err = cac.cache.Has(key)
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.Has(key)
+		resultChan <- struct {
+			result bool
+			err    error
+		}{result, err}
 		return err
 	})
 
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_has_end", time.Now())
+	if execErr != nil {
+		return false, execErr
+	}
 
-	return result, err
+	result := <-resultChan
+	return result.result, result.err
 }
 
 // GetOrSet retrieves a value or stores the result of a callback with context awareness
 func (cac *ContextAwareCache[T]) GetOrSet(ctx context.Context, key string, factory func() (*T, error), ttl time.Duration) (*T, error) {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_get_or_set_start", time.Now())
-	ctx = context.WithValue(ctx, "cache_key", key)
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan struct {
+		result *T
+		err    error
+	}, 1)
 
-	var result *T
-	var err error
-
-	// Execute with automatic timeout
-	err = cac.manager.ExecuteWithTimeout(ctx, 30*time.Second, func(ctx context.Context) error {
-		result, err = cac.cache.GetOrSet(key, factory, ttl)
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		result, err := cac.cache.GetOrSet(key, factory, ttl)
+		resultChan <- struct {
+			result *T
+			err    error
+		}{result, err}
 		return err
 	})
 
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_get_or_set_end", time.Now())
+	if execErr != nil {
+		return nil, execErr
+	}
 
-	return result, err
+	result := <-resultChan
+	return result.result, result.err
 }
 
 // GetPerformanceStats returns cache performance statistics with context awareness
 func (cac *ContextAwareCache[T]) GetPerformanceStats(ctx context.Context) map[string]interface{} {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "cache_performance_stats_start", time.Now())
+	// Execute with context awareness (respect context cancellation)
+	resultChan := make(chan map[string]interface{}, 1)
 
-	var stats map[string]interface{}
-
-	// Execute with automatic timeout
-	err := cac.manager.ExecuteWithTimeout(ctx, 5*time.Second, func(ctx context.Context) error {
-		stats = cac.cache.GetPerformanceStats()
+	execErr := cac.manager.ExecuteWithContext(ctx, func(ctx context.Context) error {
+		stats := cac.cache.GetPerformanceStats()
+		resultChan <- stats
 		return nil
 	})
 
-	// Add context values for completion
-	_ = context.WithValue(ctx, "cache_performance_stats_end", time.Now())
-
-	if err != nil {
-		return map[string]interface{}{"error": err.Error()}
+	if execErr != nil {
+		return map[string]interface{}{"error": execErr.Error()}
 	}
 
-	return stats
+	return <-resultChan
 }

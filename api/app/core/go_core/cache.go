@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -422,14 +423,108 @@ func (c *localCache[T]) GetOrSet(key string, factory func() (*T, error), ttl tim
 	return value, nil
 }
 
-// Increment increments a numeric value (not supported in local cache)
+// Increment increments a numeric value
 func (c *localCache[T]) Increment(key string, value int64) (int64, error) {
-	return 0, fmt.Errorf("increment not supported in local cache")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Get current value
+	item, exists := c.data[key]
+	var currentValue int64 = 0
+
+	if exists && item.value != nil {
+		// Try to convert current value to int64
+		switch v := any(*item.value).(type) {
+		case int64:
+			currentValue = v
+		case int:
+			currentValue = int64(v)
+		case int32:
+			currentValue = int64(v)
+		case int16:
+			currentValue = int64(v)
+		case int8:
+			currentValue = int64(v)
+		case uint64:
+			currentValue = int64(v)
+		case uint:
+			currentValue = int64(v)
+		case uint32:
+			currentValue = int64(v)
+		case uint16:
+			currentValue = int64(v)
+		case uint8:
+			currentValue = int64(v)
+		default:
+			// If not a numeric type, start from 0
+			currentValue = 0
+		}
+	}
+
+	// Calculate new value
+	newValue := currentValue + value
+
+	// Store new value using reflection for type conversion
+	newValueInterface := any(newValue)
+	newValueTyped := newValueInterface.(T)
+	c.data[key] = cacheItem[T]{
+		value:      &newValueTyped,
+		expiration: item.expiration, // Keep existing expiration
+	}
+
+	return newValue, nil
 }
 
-// Decrement decrements a numeric value (not supported in local cache)
+// Decrement decrements a numeric value
 func (c *localCache[T]) Decrement(key string, value int64) (int64, error) {
-	return 0, fmt.Errorf("decrement not supported in local cache")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Get current value
+	item, exists := c.data[key]
+	var currentValue int64 = 0
+
+	if exists && item.value != nil {
+		// Try to convert current value to int64
+		switch v := any(*item.value).(type) {
+		case int64:
+			currentValue = v
+		case int:
+			currentValue = int64(v)
+		case int32:
+			currentValue = int64(v)
+		case int16:
+			currentValue = int64(v)
+		case int8:
+			currentValue = int64(v)
+		case uint64:
+			currentValue = int64(v)
+		case uint:
+			currentValue = int64(v)
+		case uint32:
+			currentValue = int64(v)
+		case uint16:
+			currentValue = int64(v)
+		case uint8:
+			currentValue = int64(v)
+		default:
+			// If not a numeric type, start from 0
+			currentValue = 0
+		}
+	}
+
+	// Calculate new value
+	newValue := currentValue - value
+
+	// Store new value using reflection for type conversion
+	newValueInterface := any(newValue)
+	newValueTyped := newValueInterface.(T)
+	c.data[key] = cacheItem[T]{
+		value:      &newValueTyped,
+		expiration: item.expiration, // Keep existing expiration
+	}
+
+	return newValue, nil
 }
 
 // GetMany retrieves multiple values from local cache
@@ -476,16 +571,40 @@ func (c *localCache[T]) DeletePattern(pattern string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Simple pattern matching for local cache
-	// This is a basic implementation - in production you might want more sophisticated pattern matching
+	// Enhanced pattern matching for local cache
 	for key := range c.data {
-		// Simple wildcard matching - can be enhanced
-		if pattern == "*" || key == pattern {
+		if c.matchesPattern(key, pattern) {
 			delete(c.data, key)
 		}
 	}
 
 	return nil
+}
+
+// matchesPattern checks if a key matches a pattern
+func (c *localCache[T]) matchesPattern(key, pattern string) bool {
+	// Handle exact match
+	if pattern == key {
+		return true
+	}
+
+	// Handle wildcard patterns
+	if pattern == "*" {
+		return true
+	}
+
+	// Handle patterns like "user:*:profile"
+	patternParts := strings.Split(pattern, "*")
+	if len(patternParts) == 2 {
+		prefix := patternParts[0]
+		suffix := patternParts[1]
+
+		if strings.HasPrefix(key, prefix) && strings.HasSuffix(key, suffix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Flush clears all cache entries
