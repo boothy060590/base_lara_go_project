@@ -40,6 +40,24 @@ const (
 	LogLevelFatal   LogLevel = iota
 )
 
+// String returns the string representation of the log level
+func (l LogLevel) String() string {
+	switch l {
+	case LogLevelDebug:
+		return "DEBUG"
+	case LogLevelInfo:
+		return "INFO"
+	case LogLevelWarning:
+		return "WARNING"
+	case LogLevelError:
+		return "ERROR"
+	case LogLevelFatal:
+		return "FATAL"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // LoggerConfig represents logger configuration
 type LoggerConfig struct {
 	Driver   string            `json:"driver"`

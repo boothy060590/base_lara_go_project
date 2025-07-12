@@ -49,7 +49,7 @@ func NewGoroutineManager[T any](config *GoroutineConfig) *GoroutineManager[T] {
 		metrics: NewGoroutineMetrics(),
 	}
 
-	gm.workerPool = NewWorkerPool[T](config.MaxWorkers, config.QueueBufferSize)
+	gm.workerPool = NewWorkerPool[T](config.MaxWorkers, config.QueueBufferSize, gm.metrics)
 
 	if config.EnableAutoScaling {
 		go gm.autoScale()
@@ -77,6 +77,7 @@ type WorkerPool[T any] struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	mu              sync.RWMutex
+	metrics         *GoroutineMetrics
 }
 
 // Worker represents a single worker goroutine
@@ -87,10 +88,11 @@ type Worker[T any] struct {
 	cancel   context.CancelFunc
 	active   bool
 	mu       sync.RWMutex
+	metrics  *GoroutineMetrics
 }
 
 // NewWorkerPool creates a new worker pool
-func NewWorkerPool[T any](maxWorkers, queueBufferSize int) *WorkerPool[T] {
+func NewWorkerPool[T any](maxWorkers, queueBufferSize int, metrics *GoroutineMetrics) *WorkerPool[T] {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	wp := &WorkerPool[T]{
@@ -100,6 +102,7 @@ func NewWorkerPool[T any](maxWorkers, queueBufferSize int) *WorkerPool[T] {
 		workers:         make([]*Worker[T], 0, maxWorkers),
 		ctx:             ctx,
 		cancel:          cancel,
+		metrics:         metrics,
 	}
 
 	// Start workers
@@ -121,6 +124,7 @@ func (wp *WorkerPool[T]) newWorker(id int) *Worker[T] {
 		ctx:      ctx,
 		cancel:   cancel,
 		active:   true,
+		metrics:  wp.metrics,
 	}
 }
 
@@ -142,10 +146,19 @@ func (w *Worker[T]) processJob(job GoroutineJob[T]) {
 	w.active = true
 	w.mu.Unlock()
 
+	start := time.Now()
 	defer func() {
 		w.mu.Lock()
 		w.active = false
 		w.mu.Unlock()
+
+		// Update metrics after job is processed
+		if w.metrics != nil {
+			processingTime := time.Since(start)
+			activeWorkers := 1 // We'll use 1 for this worker; for more accuracy, could aggregate from pool
+			queueLength := len(w.jobQueue)
+			w.metrics.UpdateMetrics(activeWorkers, queueLength, processingTime)
+		}
 	}()
 
 	// Create context with timeout if specified
@@ -197,6 +210,13 @@ func (wp *WorkerPool[T]) GetActiveWorkerCount() int {
 		worker.mu.RUnlock()
 	}
 	return active
+}
+
+// GetTotalWorkerCount returns the total number of workers
+func (wp *WorkerPool[T]) GetTotalWorkerCount() int {
+	wp.mu.RLock()
+	defer wp.mu.RUnlock()
+	return len(wp.workers)
 }
 
 // QueueLength returns the current length of the job queue

@@ -3,6 +3,7 @@ package go_core
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -92,6 +93,9 @@ func NewEventBus[T any](wsp *WorkStealingPool[any], ca *CustomAllocator[any], pg
 
 // Dispatch dispatches an event synchronously with performance tracking and atomic counter
 func (e *EventBus[T]) Dispatch(event *Event[T]) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
 	// Track operation count atomically
 	e.atomicCounter.Increment()
 
@@ -102,6 +106,9 @@ func (e *EventBus[T]) Dispatch(event *Event[T]) error {
 
 // DispatchAsync dispatches an event asynchronously with performance tracking and atomic counter
 func (e *EventBus[T]) DispatchAsync(event *Event[T]) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
 	// Track operation count atomically
 	e.atomicCounter.Increment()
 
@@ -138,6 +145,9 @@ func (e *EventBus[T]) processEvent(ctx context.Context, data any) error {
 
 // Listen registers an event listener
 func (e *EventBus[T]) Listen(eventName string, listener EventListener[T]) error {
+	if listener == nil {
+		return fmt.Errorf("listener is nil")
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -159,9 +169,9 @@ func (e *EventBus[T]) RemoveListener(eventName string, listener EventListener[T]
 		return nil
 	}
 
-	// Find and remove the listener
+	listenerPtr := reflect.ValueOf(listener).Pointer()
 	for i, l := range listeners {
-		if fmt.Sprintf("%p", l) == fmt.Sprintf("%p", listener) {
+		if reflect.ValueOf(l).Pointer() == listenerPtr {
 			e.listeners[eventName] = append(listeners[:i], listeners[i+1:]...)
 			break
 		}
@@ -172,6 +182,9 @@ func (e *EventBus[T]) RemoveListener(eventName string, listener EventListener[T]
 
 // Handle processes an event by calling all registered listeners with performance tracking
 func (e *EventBus[T]) Handle(event *Event[T]) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
 	return e.performanceFacade.Track("event.handle", func() error {
 		e.mu.RLock()
 		listeners, exists := e.listeners[event.Name]
@@ -290,6 +303,9 @@ func NewMemoryEventStore[T any]() EventStore[T] {
 
 // Store stores an event
 func (s *memoryEventStore[T]) Store(event *Event[T]) error {
+	if event == nil {
+		return fmt.Errorf("event is nil")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -303,6 +319,9 @@ func (s *memoryEventStore[T]) StoreMany(events []*Event[T]) error {
 	defer s.mu.Unlock()
 
 	for _, event := range events {
+		if event == nil {
+			continue // Skip nil events
+		}
 		s.events[event.ID] = event
 	}
 
@@ -351,7 +370,7 @@ func (s *memoryEventStore[T]) GetByTimeRange(start, end time.Time) ([]*Event[T],
 	var events []*Event[T]
 
 	for _, event := range s.events {
-		if event.Timestamp.After(start) && event.Timestamp.Before(end) {
+		if (event.Timestamp.After(start) || event.Timestamp.Equal(start)) && (event.Timestamp.Before(end) || event.Timestamp.Equal(end)) {
 			events = append(events, event)
 		}
 	}
@@ -417,6 +436,7 @@ type EventManagerInterface[T any] interface {
 	// Utility operations
 	HasListeners(eventName string) bool
 	GetListenerCount(eventName string) int
+	RemoveListener(eventName string, listener EventListener[T]) error
 }
 
 // EventManager combines event dispatching and storage
@@ -485,4 +505,9 @@ func (m *EventManager[T]) HasListeners(eventName string) bool {
 // GetListenerCount returns the number of listeners for an event
 func (m *EventManager[T]) GetListenerCount(eventName string) int {
 	return m.dispatcher.GetListenerCount(eventName)
+}
+
+// RemoveListener removes an event listener
+func (m *EventManager[T]) RemoveListener(eventName string, listener EventListener[T]) error {
+	return m.dispatcher.RemoveListener(eventName, listener)
 }
