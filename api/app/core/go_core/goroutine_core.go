@@ -488,11 +488,20 @@ func (gajd *GoroutineAwareJobDispatcher[T]) DispatchAsync(job T) error {
 }
 
 // GetMetrics returns current goroutine metrics
-func (gm *GoroutineManager[T]) GetMetrics() *GoroutineMetrics {
+func (gm *GoroutineManager[T]) GetMetrics() GoroutineMetrics {
 	gm.mu.RLock()
 	defer gm.mu.RUnlock()
 
-	return gm.metrics
+	gm.metrics.mu.RLock()
+	defer gm.metrics.mu.RUnlock()
+
+	return GoroutineMetrics{
+		TotalJobsProcessed:    gm.metrics.TotalJobsProcessed,
+		ActiveWorkers:         gm.metrics.ActiveWorkers,
+		QueueLength:           gm.metrics.QueueLength,
+		AverageProcessingTime: gm.metrics.AverageProcessingTime,
+		LastUpdated:           gm.metrics.LastUpdated,
+	}
 }
 
 // GetWorkerPool returns the underlying worker pool

@@ -41,17 +41,32 @@ type Queue[T any] interface {
 	Pop() (*Job[T], error)
 	Delete(jobID string) error
 
+	// Context-aware basic operations
+	PushWithContext(ctx context.Context, job *Job[T]) error
+	PopWithContext(ctx context.Context) (*Job[T], error)
+	DeleteWithContext(ctx context.Context, jobID string) error
+
 	// Batch operations
 	PushMany(jobs []*Job[T]) error
 	PopMany(count int) ([]*Job[T], error)
+
+	// Context-aware batch operations
+	PushManyWithContext(ctx context.Context, jobs []*Job[T]) error
+	PopManyWithContext(ctx context.Context, count int) ([]*Job[T], error)
 
 	// Job management
 	Retry(job *Job[T]) error
 	Fail(job *Job[T], error error) error
 
+	// Context-aware job management
+	RetryWithContext(ctx context.Context, job *Job[T]) error
+	FailWithContext(ctx context.Context, job *Job[T], error error) error
+
 	// Queue management
 	Size() (int64, error)
 	Clear() error
+	SizeWithContext(ctx context.Context) (int64, error)
+	ClearWithContext(ctx context.Context) error
 	WithContext(ctx context.Context) Queue[T]
 }
 
@@ -246,32 +261,48 @@ func NewQueueWorker[T any](queue Queue[T], handler JobHandler[T], wsp *WorkSteal
 
 // Start begins processing jobs with performance tracking and atomic counter
 func (w *QueueWorker[T]) Start() error {
-	return w.performanceFacade.Track("worker.start", func() error {
-		for {
-			select {
-			case <-w.ctx.Done():
-				return w.ctx.Err()
-			default:
-				// Track operation count atomically
+	if w.performanceFacade != nil {
+		return w.performanceFacade.Track("worker.start", func() error {
+			return w.processJobs()
+		})
+	}
+	return w.processJobs()
+}
+
+// processJobs is the main job processing loop
+func (w *QueueWorker[T]) processJobs() error {
+	for {
+		select {
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		default:
+			// Track operation count atomically
+			if w.atomicCounter != nil {
 				w.atomicCounter.Increment()
+			}
 
-				// Pop job from queue
-				job, err := w.queue.Pop()
-				if err != nil {
-					// No jobs available, wait a bit
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
+			// Pop job from queue
+			job, err := w.queue.Pop()
+			if err != nil {
+				// No jobs available, wait a bit
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
 
-				// Process job
-				err = w.processJob(job)
-				if err != nil {
-					// Handle job failure
-					w.handleJobFailure(job, err)
-				}
+			if job == nil {
+				// Queue is empty, wait a bit
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
+			// Process job
+			err = w.processJob(job)
+			if err != nil {
+				// Handle job failure
+				w.handleJobFailure(job, err)
 			}
 		}
-	})
+	}
 }
 
 // Stop stops the worker
@@ -281,14 +312,22 @@ func (w *QueueWorker[T]) Stop() {
 
 // processJob processes a single job with performance tracking
 func (w *QueueWorker[T]) processJob(job *Job[T]) error {
-	return w.performanceFacade.Track("worker.process_job", func() error {
-		// Update processed time
-		now := time.Now()
-		job.ProcessedAt = &now
+	if w.performanceFacade != nil {
+		return w.performanceFacade.Track("worker.process_job", func() error {
+			return w.executeJob(job)
+		})
+	}
+	return w.executeJob(job)
+}
 
-		// Call handler
-		return w.handler(w.ctx, job)
-	})
+// executeJob executes a single job
+func (w *QueueWorker[T]) executeJob(job *Job[T]) error {
+	// Update processed time
+	now := time.Now()
+	job.ProcessedAt = &now
+
+	// Call handler
+	return w.handler(w.ctx, job)
 }
 
 // handleJobFailure handles job processing failures
@@ -322,20 +361,30 @@ func NewRedisQueue[T any](client *redis.Client, queueName string) Queue[T] {
 
 // Push adds a job to the queue
 func (q *redisQueue[T]) Push(job *Job[T]) error {
+	return q.PushWithContext(q.ctx, job)
+}
+
+// PushWithContext adds a job to the queue with context support
+func (q *redisQueue[T]) PushWithContext(ctx context.Context, job *Job[T]) error {
 	data, err := json.Marshal(job)
 	if err != nil {
 		return fmt.Errorf("failed to marshal job: %w", err)
 	}
 
-	return q.client.LPush(q.ctx, q.queueName, data).Err()
+	return q.client.LPush(ctx, q.queueName, data).Err()
 }
 
-// Pop retrieves a job from the queue
+// Pop removes and returns a job from the queue
 func (q *redisQueue[T]) Pop() (*Job[T], error) {
-	result, err := q.client.BRPop(q.ctx, 0, q.queueName).Result()
+	return q.PopWithContext(q.ctx)
+}
+
+// PopWithContext removes and returns a job from the queue with context support
+func (q *redisQueue[T]) PopWithContext(ctx context.Context) (*Job[T], error) {
+	result, err := q.client.BRPop(ctx, 0, q.queueName).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil // No jobs available
+			return nil, nil // Queue is empty
 		}
 		return nil, err
 	}
@@ -344,8 +393,9 @@ func (q *redisQueue[T]) Pop() (*Job[T], error) {
 		return nil, fmt.Errorf("invalid queue result")
 	}
 
+	data := result[1]
 	var job Job[T]
-	err = json.Unmarshal([]byte(result[1]), &job)
+	err = json.Unmarshal([]byte(data), &job)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal job: %w", err)
 	}
@@ -355,49 +405,60 @@ func (q *redisQueue[T]) Pop() (*Job[T], error) {
 
 // Delete removes a job from the queue
 func (q *redisQueue[T]) Delete(jobID string) error {
-	// For Redis, we can't delete specific jobs easily
-	// This would require scanning the queue, which is inefficient
-	// In practice, jobs are removed when popped
+	return q.DeleteWithContext(q.ctx, jobID)
+}
+
+// DeleteWithContext removes a job from the queue with context support
+func (q *redisQueue[T]) DeleteWithContext(ctx context.Context, jobID string) error {
+	// For Redis, we need to scan and remove the specific job
+	// This is a simplified implementation
 	return nil
 }
 
 // PushMany adds multiple jobs to the queue
 func (q *redisQueue[T]) PushMany(jobs []*Job[T]) error {
+	return q.PushManyWithContext(q.ctx, jobs)
+}
+
+// PushManyWithContext adds multiple jobs to the queue with context support
+func (q *redisQueue[T]) PushManyWithContext(ctx context.Context, jobs []*Job[T]) error {
 	if len(jobs) == 0 {
 		return nil
 	}
 
-	// Prepare pipeline
 	pipe := q.client.Pipeline()
-
 	for _, job := range jobs {
 		data, err := json.Marshal(job)
 		if err != nil {
 			return fmt.Errorf("failed to marshal job: %w", err)
 		}
-
-		pipe.LPush(q.ctx, q.queueName, data)
+		pipe.LPush(ctx, q.queueName, data)
 	}
 
-	// Execute pipeline
-	_, err := pipe.Exec(q.ctx)
+	_, err := pipe.Exec(ctx)
 	return err
 }
 
-// PopMany retrieves multiple jobs from the queue
+// PopMany removes and returns multiple jobs from the queue
 func (q *redisQueue[T]) PopMany(count int) ([]*Job[T], error) {
-	jobs := make([]*Job[T], 0, count)
+	return q.PopManyWithContext(q.ctx, count)
+}
 
+// PopManyWithContext removes and returns multiple jobs from the queue with context support
+func (q *redisQueue[T]) PopManyWithContext(ctx context.Context, count int) ([]*Job[T], error) {
+	if count <= 0 {
+		return []*Job[T]{}, nil
+	}
+
+	var jobs []*Job[T]
 	for i := 0; i < count; i++ {
-		job, err := q.Pop()
+		job, err := q.PopWithContext(ctx)
 		if err != nil {
 			return jobs, err
 		}
-
 		if job == nil {
-			break // No more jobs
+			break // Queue is empty
 		}
-
 		jobs = append(jobs, job)
 	}
 
@@ -406,25 +467,49 @@ func (q *redisQueue[T]) PopMany(count int) ([]*Job[T], error) {
 
 // Retry retries a failed job
 func (q *redisQueue[T]) Retry(job *Job[T]) error {
-	// For Redis, we'll just push it back to the queue
-	return q.Push(job)
+	return q.RetryWithContext(q.ctx, job)
 }
 
-// Fail marks a job as permanently failed
+// RetryWithContext retries a failed job with context support
+func (q *redisQueue[T]) RetryWithContext(ctx context.Context, job *Job[T]) error {
+	if job.Attempts >= job.MaxRetries {
+		return fmt.Errorf("job %s has exceeded max retries", job.ID)
+	}
+
+	job.Attempts++
+	return q.PushWithContext(ctx, job)
+}
+
+// Fail marks a job as failed
 func (q *redisQueue[T]) Fail(job *Job[T], err error) error {
-	// For Redis, we could move it to a failed jobs queue
-	// For now, we'll just log the failure
+	return q.FailWithContext(q.ctx, job, err)
+}
+
+// FailWithContext marks a job as failed with context support
+func (q *redisQueue[T]) FailWithContext(ctx context.Context, job *Job[T], err error) error {
+	// For now, just log the failure
+	// In a real implementation, you might want to store failed jobs in a separate queue
 	return nil
 }
 
 // Size returns the number of jobs in the queue
 func (q *redisQueue[T]) Size() (int64, error) {
-	return q.client.LLen(q.ctx, q.queueName).Result()
+	return q.SizeWithContext(q.ctx)
+}
+
+// SizeWithContext returns the number of jobs in the queue with context support
+func (q *redisQueue[T]) SizeWithContext(ctx context.Context) (int64, error) {
+	return q.client.LLen(ctx, q.queueName).Result()
 }
 
 // Clear removes all jobs from the queue
 func (q *redisQueue[T]) Clear() error {
-	return q.client.Del(q.ctx, q.queueName).Err()
+	return q.ClearWithContext(q.ctx)
+}
+
+// ClearWithContext removes all jobs from the queue with context support
+func (q *redisQueue[T]) ClearWithContext(ctx context.Context) error {
+	return q.client.Del(ctx, q.queueName).Err()
 }
 
 // WithContext returns a queue with context
@@ -453,6 +538,18 @@ func NewSyncQueue[T any]() Queue[T] {
 
 // Push adds a job to the queue
 func (q *syncQueue[T]) Push(job *Job[T]) error {
+	return q.PushWithContext(q.ctx, job)
+}
+
+// PushWithContext adds a job to the queue with context support
+func (q *syncQueue[T]) PushWithContext(ctx context.Context, job *Job[T]) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -460,8 +557,20 @@ func (q *syncQueue[T]) Push(job *Job[T]) error {
 	return nil
 }
 
-// Pop retrieves a job from the queue
+// Pop removes and returns a job from the queue
 func (q *syncQueue[T]) Pop() (*Job[T], error) {
+	return q.PopWithContext(q.ctx)
+}
+
+// PopWithContext removes and returns a job from the queue with context support
+func (q *syncQueue[T]) PopWithContext(ctx context.Context) (*Job[T], error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -471,27 +580,54 @@ func (q *syncQueue[T]) Pop() (*Job[T], error) {
 
 	job := q.jobs[0]
 	q.jobs = q.jobs[1:]
-
 	return job, nil
 }
 
-// Delete removes a job from the queue
+// Delete removes a job from the queue by ID
 func (q *syncQueue[T]) Delete(jobID string) error {
+	return q.DeleteWithContext(q.ctx, jobID)
+}
+
+// DeleteWithContext removes a job from the queue by ID with context support
+func (q *syncQueue[T]) DeleteWithContext(ctx context.Context, jobID string) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	for i, job := range q.jobs {
 		if job.ID == jobID {
 			q.jobs = append(q.jobs[:i], q.jobs[i+1:]...)
-			break
+			return nil
 		}
 	}
 
-	return nil
+	return fmt.Errorf("job %s not found", jobID)
 }
 
 // PushMany adds multiple jobs to the queue
 func (q *syncQueue[T]) PushMany(jobs []*Job[T]) error {
+	return q.PushManyWithContext(q.ctx, jobs)
+}
+
+// PushManyWithContext adds multiple jobs to the queue with context support
+func (q *syncQueue[T]) PushManyWithContext(ctx context.Context, jobs []*Job[T]) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if len(jobs) == 0 {
+		return nil
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -499,38 +635,92 @@ func (q *syncQueue[T]) PushMany(jobs []*Job[T]) error {
 	return nil
 }
 
-// PopMany retrieves multiple jobs from the queue
+// PopMany removes and returns multiple jobs from the queue
 func (q *syncQueue[T]) PopMany(count int) ([]*Job[T], error) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+	return q.PopManyWithContext(q.ctx, count)
+}
 
-	if len(q.jobs) == 0 {
+// PopManyWithContext removes and returns multiple jobs from the queue with context support
+func (q *syncQueue[T]) PopManyWithContext(ctx context.Context, count int) ([]*Job[T], error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	if count <= 0 {
 		return []*Job[T]{}, nil
 	}
 
-	if count > len(q.jobs) {
-		count = len(q.jobs)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	actualCount := count
+	if len(q.jobs) < count {
+		actualCount = len(q.jobs)
 	}
 
-	jobs := q.jobs[:count]
-	q.jobs = q.jobs[count:]
-
+	jobs := q.jobs[:actualCount]
+	q.jobs = q.jobs[actualCount:]
 	return jobs, nil
 }
 
 // Retry retries a failed job
 func (q *syncQueue[T]) Retry(job *Job[T]) error {
-	return q.Push(job)
+	return q.RetryWithContext(q.ctx, job)
 }
 
-// Fail marks a job as permanently failed
+// RetryWithContext retries a failed job with context support
+func (q *syncQueue[T]) RetryWithContext(ctx context.Context, job *Job[T]) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if job.Attempts >= job.MaxRetries {
+		return fmt.Errorf("job %s has exceeded max retries", job.ID)
+	}
+
+	job.Attempts++
+	return q.PushWithContext(ctx, job)
+}
+
+// Fail marks a job as failed
 func (q *syncQueue[T]) Fail(job *Job[T], err error) error {
-	// For sync queue, we'll just log the failure
+	return q.FailWithContext(q.ctx, job, err)
+}
+
+// FailWithContext marks a job as failed with context support
+func (q *syncQueue[T]) FailWithContext(ctx context.Context, job *Job[T], err error) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// For now, just log the failure
+	// In a real implementation, you might want to store failed jobs in a separate queue
 	return nil
 }
 
 // Size returns the number of jobs in the queue
 func (q *syncQueue[T]) Size() (int64, error) {
+	return q.SizeWithContext(q.ctx)
+}
+
+// SizeWithContext returns the number of jobs in the queue with context support
+func (q *syncQueue[T]) SizeWithContext(ctx context.Context) (int64, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
@@ -539,17 +729,27 @@ func (q *syncQueue[T]) Size() (int64, error) {
 
 // Clear removes all jobs from the queue
 func (q *syncQueue[T]) Clear() error {
+	return q.ClearWithContext(q.ctx)
+}
+
+// ClearWithContext removes all jobs from the queue with context support
+func (q *syncQueue[T]) ClearWithContext(ctx context.Context) error {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	q.jobs = make([]*Job[T], 0)
+	q.jobs = []*Job[T]{}
 	return nil
 }
 
-// WithContext returns a queue with context
+// WithContext returns the same queue instance with the updated context
 func (q *syncQueue[T]) WithContext(ctx context.Context) Queue[T] {
-	return &syncQueue[T]{
-		jobs: q.jobs,
-		ctx:  ctx,
-	}
+	q.ctx = ctx
+	return q
 }

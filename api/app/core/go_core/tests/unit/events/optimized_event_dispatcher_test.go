@@ -668,18 +668,23 @@ func TestOptimizedEventDispatcher_StressTest(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Verify all events were processed
-	assert.Len(t, processedEvents, numEvents)
+	mu.Lock()
+	processedCount := len(processedEvents)
+	mu.Unlock()
+	assert.Equal(t, numEvents, processedCount)
 
 	// Verify no duplicate processing
 	for g := 0; g < numGoroutines; g++ {
 		for i := 0; i < numEvents/numGoroutines; i++ {
 			eventID := fmt.Sprintf("stress-%d-%d", g, i)
-			assert.True(t, processedEvents[eventID], "Event %s was not processed", eventID)
+			mu.Lock()
+			processed := processedEvents[eventID]
+			mu.Unlock()
+			assert.True(t, processed, "Event %s was not processed", eventID)
 		}
 	}
 
 	// Check goroutine pool metrics
 	metrics := goroutineManager.GetMetrics()
-	assert.NotNil(t, metrics)
 	assert.GreaterOrEqual(t, metrics.TotalJobsProcessed, int64(numEvents))
 }

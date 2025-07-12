@@ -261,7 +261,7 @@ func (gf *GoroutineFacade) Reduce(items []interface{}, initial interface{}, redu
 }
 
 // GetMetrics returns current goroutine metrics
-func (gf *GoroutineFacade) GetMetrics() *go_core.GoroutineMetrics {
+func (gf *GoroutineFacade) GetMetrics() go_core.GoroutineMetrics {
 	return gf.manager.GetMetrics()
 }
 
