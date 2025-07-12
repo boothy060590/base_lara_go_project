@@ -18,18 +18,36 @@ type Repository[T any] interface {
 	Update(model *T) error
 	Delete(id uint) error
 
+	// Context-aware basic CRUD operations
+	FindWithContext(ctx context.Context, id uint) (*T, error)
+	FindByWithContext(ctx context.Context, field string, value any) (*T, error)
+	FindAllWithContext(ctx context.Context) ([]T, error)
+	CreateWithContext(ctx context.Context, model *T) error
+	UpdateWithContext(ctx context.Context, model *T) error
+	DeleteWithContext(ctx context.Context, id uint) error
+
 	// Query operations
 	Where(conditions map[string]any) Query[T]
 	WhereRaw(query string, args ...any) Query[T]
 
+	// Context-aware query operations
+	WhereWithContext(ctx context.Context, conditions map[string]any) Query[T]
+	WhereRawWithContext(ctx context.Context, query string, args ...any) Query[T]
+
 	// Transaction support
 	Transaction(fn func(Repository[T]) error) error
+	TransactionWithContext(ctx context.Context, fn func(Repository[T]) error) error
 	WithContext(ctx context.Context) Repository[T]
 
 	// Utility operations
 	Exists(id uint) (bool, error)
 	Count() (int64, error)
 	CountWhere(conditions map[string]any) (int64, error)
+
+	// Context-aware utility operations
+	ExistsWithContext(ctx context.Context, id uint) (bool, error)
+	CountWithContext(ctx context.Context) (int64, error)
+	CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error)
 
 	// Performance operations
 	GetPerformanceStats() map[string]interface{}
@@ -42,6 +60,11 @@ type Query[T any] interface {
 	Get() ([]T, error)
 	First() (*T, error)
 	Paginate(page, perPage int) ([]T, int64, error)
+
+	// Context-aware execution
+	GetWithContext(ctx context.Context) ([]T, error)
+	FirstWithContext(ctx context.Context) (*T, error)
+	PaginateWithContext(ctx context.Context, page, perPage int) ([]T, int64, error)
 
 	// Query building
 	Where(field string, operator string, value any) Query[T]
@@ -95,6 +118,10 @@ func NewRepository[T any](db *gorm.DB, wsp *WorkStealingPool[any], ca *CustomAll
 func (r *repository[T]) allocate() T {
 	if r.customAllocator != nil {
 		obj, _ := r.customAllocator.Allocate(0)
+		if obj == nil {
+			// Fallback to object pool if custom allocator returns nil
+			return r.objectPool.Get()
+		}
 		return obj.(T)
 	}
 	return r.objectPool.Get()
@@ -110,14 +137,26 @@ func (r *repository[T]) deallocate(obj T) {
 
 // Find retrieves a model by ID with performance tracking and atomic counter
 func (r *repository[T]) Find(id uint) (*T, error) {
+	return r.FindWithContext(context.Background(), id)
+}
+
+// FindWithContext retrieves a model by ID with context support
+func (r *repository[T]) FindWithContext(ctx context.Context, id uint) (*T, error) {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result *T
 	err := r.performanceFacade.Track("repository.find", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Create fresh entity for database operation (avoid concurrency issues)
 		var entity T
-		if err := r.db.First(&entity, id).Error; err != nil {
+		if err := r.db.WithContext(ctx).First(&entity, id).Error; err != nil {
 			return err
 		}
 		result = &entity
@@ -128,14 +167,26 @@ func (r *repository[T]) Find(id uint) (*T, error) {
 
 // FindBy retrieves a model by field and value with performance tracking and atomic counter
 func (r *repository[T]) FindBy(field string, value any) (*T, error) {
+	return r.FindByWithContext(context.Background(), field, value)
+}
+
+// FindByWithContext retrieves a model by field and value with context support
+func (r *repository[T]) FindByWithContext(ctx context.Context, field string, value any) (*T, error) {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result *T
 	err := r.performanceFacade.Track("repository.find_by", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Create fresh entity for database operation (avoid concurrency issues)
 		var entity T
-		if err := r.db.Where(field+" = ?", value).First(&entity).Error; err != nil {
+		if err := r.db.WithContext(ctx).Where(field+" = ?", value).First(&entity).Error; err != nil {
 			return err
 		}
 		result = &entity
@@ -146,10 +197,22 @@ func (r *repository[T]) FindBy(field string, value any) (*T, error) {
 
 // FindAll retrieves all records with performance tracking and pipeline optimization
 func (r *repository[T]) FindAll() ([]T, error) {
+	return r.FindAllWithContext(context.Background())
+}
+
+// FindAllWithContext retrieves all records with context support
+func (r *repository[T]) FindAllWithContext(ctx context.Context) ([]T, error) {
 	var result []T
 	err := r.performanceFacade.Track("repository.find_all", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Get all records (database operation - use fresh objects)
-		if err := r.db.Find(&result).Error; err != nil {
+		if err := r.db.WithContext(ctx).Find(&result).Error; err != nil {
 			return err
 		}
 
@@ -160,7 +223,7 @@ func (r *repository[T]) FindAll() ([]T, error) {
 
 		// Use work stealing pool for concurrent processing of large datasets
 		if r.workStealingPool != nil && len(result) > 100 {
-			return r.processWithWorkStealing(result)
+			return r.processWithWorkStealing(ctx, result)
 		}
 
 		// Use channel-based pipeline for processing large datasets (safe - in-memory only)
@@ -171,6 +234,12 @@ func (r *repository[T]) FindAll() ([]T, error) {
 			// Collect results (safe to use object pool for data processing)
 			optimized := make([]T, 0, len(result))
 			for item := range processed {
+				// Check for context cancellation during processing
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 				// Safe to use object pool here - this is data processing, not database operations
 				optimized = append(optimized, item)
 			}
@@ -182,11 +251,18 @@ func (r *repository[T]) FindAll() ([]T, error) {
 	return result, err
 }
 
-// processWithWorkStealing processes results using work stealing pool
-func (r *repository[T]) processWithWorkStealing(results []T) error {
+// processWithWorkStealing processes results using work stealing pool with context
+func (r *repository[T]) processWithWorkStealing(ctx context.Context, results []T) error {
 	// Use custom allocator for work items if available
 	workItems := make([]WorkItem[any], len(results))
 	for i, result := range results {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Allocate work item using custom allocator if available
 		workItem := r.allocate()
 		defer r.deallocate(workItem)
@@ -201,6 +277,13 @@ func (r *repository[T]) processWithWorkStealing(results []T) error {
 
 	// Submit work items to work stealing pool
 	for _, item := range workItems {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err := r.workStealingPool.Submit(item); err != nil {
 			return err
 		}
@@ -218,41 +301,77 @@ func (r *repository[T]) processResult(ctx context.Context, data any) error {
 
 // Create saves a new model with performance tracking and dynamic optimization
 func (r *repository[T]) Create(model *T) error {
+	return r.CreateWithContext(context.Background(), model)
+}
+
+// CreateWithContext saves a new model with context support
+func (r *repository[T]) CreateWithContext(ctx context.Context, model *T) error {
 	return r.performanceFacade.Track("repository.create", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Apply dynamic optimization to the model
 		if err := r.performanceFacade.Optimize(model); err != nil {
 			// Log optimization error but continue with creation
 			// log.Printf("Optimization failed for model: %v", err)
 		}
 
-		return r.db.Create(model).Error
+		return r.db.WithContext(ctx).Create(model).Error
 	})
 }
 
 // Update saves an existing model with performance tracking and dynamic optimization
 func (r *repository[T]) Update(model *T) error {
+	return r.UpdateWithContext(context.Background(), model)
+}
+
+// UpdateWithContext saves an existing model with context support
+func (r *repository[T]) UpdateWithContext(ctx context.Context, model *T) error {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	return r.performanceFacade.Track("repository.update", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Apply dynamic optimization to the model before update
 		if err := r.performanceFacade.Optimize(model); err != nil {
 			// Log optimization error but continue with update
 			// log.Printf("Optimization failed for model: %v", err)
 		}
 
-		return r.db.Save(model).Error
+		return r.db.WithContext(ctx).Save(model).Error
 	})
 }
 
 // Delete removes a model by ID with performance tracking and atomic counter
 func (r *repository[T]) Delete(id uint) error {
+	return r.DeleteWithContext(context.Background(), id)
+}
+
+// DeleteWithContext removes a model by ID with context support
+func (r *repository[T]) DeleteWithContext(ctx context.Context, id uint) error {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	return r.performanceFacade.Track("repository.delete", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var model T
-		return r.db.Delete(&model, id).Error
+		return r.db.WithContext(ctx).Delete(&model, id).Error
 	})
 }
 
@@ -280,7 +399,12 @@ func (r *repository[T]) GetOptimizationStats() map[string]interface{} {
 
 // Where creates a query with conditions
 func (r *repository[T]) Where(conditions map[string]any) Query[T] {
-	query := r.db
+	return r.WhereWithContext(context.Background(), conditions)
+}
+
+// WhereWithContext creates a query with conditions and context
+func (r *repository[T]) WhereWithContext(ctx context.Context, conditions map[string]any) Query[T] {
+	query := r.db.WithContext(ctx)
 	for field, value := range conditions {
 		query = query.Where(field+" = ?", value)
 	}
@@ -294,8 +418,13 @@ func (r *repository[T]) Where(conditions map[string]any) Query[T] {
 
 // WhereRaw creates a query with raw SQL
 func (r *repository[T]) WhereRaw(query string, args ...any) Query[T] {
+	return r.WhereRawWithContext(context.Background(), query, args...)
+}
+
+// WhereRawWithContext creates a query with raw SQL and context
+func (r *repository[T]) WhereRawWithContext(ctx context.Context, query string, args ...any) Query[T] {
 	return &queryBuilder[T]{
-		db:                r.db.Where(query, args...),
+		db:                r.db.WithContext(ctx).Where(query, args...),
 		performanceFacade: r.performanceFacade,
 		objectPool:        r.objectPool,
 		atomicCounter:     r.atomicCounter,
@@ -304,13 +433,21 @@ func (r *repository[T]) WhereRaw(query string, args ...any) Query[T] {
 
 // Transaction executes a function within a database transaction
 func (r *repository[T]) Transaction(fn func(Repository[T]) error) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	return r.TransactionWithContext(context.Background(), fn)
+}
+
+// TransactionWithContext executes a function within a database transaction with context
+func (r *repository[T]) TransactionWithContext(ctx context.Context, fn func(Repository[T]) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := &repository[T]{
 			db:                 tx,
 			performanceFacade:  r.performanceFacade,
 			objectPool:         r.objectPool,
 			atomicCounter:      r.atomicCounter,
 			optimizationEngine: r.optimizationEngine,
+			workStealingPool:   r.workStealingPool,
+			customAllocator:    r.customAllocator,
+			profileOptimizer:   r.profileOptimizer,
 		}
 		return fn(txRepo)
 	})
@@ -324,18 +461,33 @@ func (r *repository[T]) WithContext(ctx context.Context) Repository[T] {
 		objectPool:         r.objectPool,
 		atomicCounter:      r.atomicCounter,
 		optimizationEngine: r.optimizationEngine,
+		workStealingPool:   r.workStealingPool,
+		customAllocator:    r.customAllocator,
+		profileOptimizer:   r.profileOptimizer,
 	}
 }
 
 // Exists checks if a model exists by ID with performance tracking and atomic counter
 func (r *repository[T]) Exists(id uint) (bool, error) {
+	return r.ExistsWithContext(context.Background(), id)
+}
+
+// ExistsWithContext checks if a model exists by ID with context support
+func (r *repository[T]) ExistsWithContext(ctx context.Context, id uint) (bool, error) {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result bool
 	err := r.performanceFacade.Track("repository.exists", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var count int64
-		if err := r.db.Model(new(T)).Where("id = ?", id).Count(&count).Error; err != nil {
+		if err := r.db.WithContext(ctx).Model(new(T)).Where("id = ?", id).Count(&count).Error; err != nil {
 			return err
 		}
 		result = count > 0
@@ -346,12 +498,24 @@ func (r *repository[T]) Exists(id uint) (bool, error) {
 
 // Count returns the total number of models with performance tracking and atomic counter
 func (r *repository[T]) Count() (int64, error) {
+	return r.CountWithContext(context.Background())
+}
+
+// CountWithContext returns the total number of models with context support
+func (r *repository[T]) CountWithContext(ctx context.Context) (int64, error) {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result int64
 	err := r.performanceFacade.Track("repository.count", func() error {
-		if err := r.db.Model(new(T)).Count(&result).Error; err != nil {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err := r.db.WithContext(ctx).Model(new(T)).Count(&result).Error; err != nil {
 			return err
 		}
 		return nil
@@ -361,12 +525,24 @@ func (r *repository[T]) Count() (int64, error) {
 
 // CountWhere returns the count with conditions with performance tracking and atomic counter
 func (r *repository[T]) CountWhere(conditions map[string]any) (int64, error) {
+	return r.CountWhereWithContext(context.Background(), conditions)
+}
+
+// CountWhereWithContext returns the count with conditions and context support
+func (r *repository[T]) CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error) {
 	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result int64
 	err := r.performanceFacade.Track("repository.count_where", func() error {
-		query := r.db.Model(new(T))
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		query := r.db.WithContext(ctx).Model(new(T))
 		for field, value := range conditions {
 			query = query.Where(field+" = ?", value)
 		}
@@ -388,6 +564,11 @@ type queryBuilder[T any] struct {
 
 // Get retrieves all matching models with performance tracking and pipeline optimization
 func (q *queryBuilder[T]) Get() ([]T, error) {
+	return q.GetWithContext(context.Background())
+}
+
+// GetWithContext retrieves all matching models with context support
+func (q *queryBuilder[T]) GetWithContext(ctx context.Context) ([]T, error) {
 	// Track operation count atomically
 	if q.atomicCounter != nil {
 		q.atomicCounter.Increment()
@@ -395,6 +576,13 @@ func (q *queryBuilder[T]) Get() ([]T, error) {
 
 	var result []T
 	err := q.performanceFacade.Track("query.get", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err := q.db.Find(&result).Error; err != nil {
 			return err
 		}
@@ -407,6 +595,12 @@ func (q *queryBuilder[T]) Get() ([]T, error) {
 			// Collect results
 			optimized := make([]T, 0, len(result))
 			for item := range processed {
+				// Check for context cancellation during processing
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 				optimized = append(optimized, item)
 			}
 			result = optimized
@@ -419,6 +613,11 @@ func (q *queryBuilder[T]) Get() ([]T, error) {
 
 // First retrieves the first matching model with performance tracking and atomic counter
 func (q *queryBuilder[T]) First() (*T, error) {
+	return q.FirstWithContext(context.Background())
+}
+
+// FirstWithContext retrieves the first matching model with context support
+func (q *queryBuilder[T]) FirstWithContext(ctx context.Context) (*T, error) {
 	// Track operation count atomically
 	if q.atomicCounter != nil {
 		q.atomicCounter.Increment()
@@ -426,6 +625,13 @@ func (q *queryBuilder[T]) First() (*T, error) {
 
 	var result *T
 	err := q.performanceFacade.Track("query.first", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Create fresh entity for database operation (avoid concurrency issues)
 		var entity T
 		if err := q.db.First(&entity).Error; err != nil {
@@ -439,6 +645,19 @@ func (q *queryBuilder[T]) First() (*T, error) {
 
 // Paginate retrieves models with pagination with performance tracking and pipeline optimization
 func (q *queryBuilder[T]) Paginate(page, perPage int) ([]T, int64, error) {
+	return q.PaginateWithContext(context.Background(), page, perPage)
+}
+
+// PaginateWithContext retrieves models with pagination and context support
+func (q *queryBuilder[T]) PaginateWithContext(ctx context.Context, page, perPage int) ([]T, int64, error) {
+	// Validate pagination parameters
+	if page <= 0 {
+		return nil, 0, fmt.Errorf("page must be greater than 0, got %d", page)
+	}
+	if perPage <= 0 {
+		return nil, 0, fmt.Errorf("perPage must be greater than 0, got %d", perPage)
+	}
+
 	// Track operation count atomically
 	if q.atomicCounter != nil {
 		q.atomicCounter.Increment()
@@ -448,6 +667,13 @@ func (q *queryBuilder[T]) Paginate(page, perPage int) ([]T, int64, error) {
 	var total int64
 
 	err := q.performanceFacade.Track("query.paginate", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Count total
 		if err := q.db.Model(new(T)).Count(&total).Error; err != nil {
 			return err
@@ -467,6 +693,12 @@ func (q *queryBuilder[T]) Paginate(page, perPage int) ([]T, int64, error) {
 			// Collect results
 			optimized := make([]T, 0, len(result))
 			for item := range processed {
+				// Check for context cancellation during processing
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 				optimized = append(optimized, item)
 			}
 			result = optimized

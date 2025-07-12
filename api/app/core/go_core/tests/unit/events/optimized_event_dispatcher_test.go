@@ -621,14 +621,13 @@ func TestOptimizedEventDispatcher_StressTest(t *testing.T) {
 
 	var mu sync.Mutex
 	processedEvents := make(map[string]bool)
+	var wg sync.WaitGroup
 
 	listener := func(ctx context.Context, event *go_core.Event[string]) error {
 		mu.Lock()
 		processedEvents[event.ID] = true
 		mu.Unlock()
-
-		// Simulate some processing time
-		time.Sleep(1 * time.Millisecond)
+		wg.Done()
 		return nil
 	}
 
@@ -636,15 +635,14 @@ func TestOptimizedEventDispatcher_StressTest(t *testing.T) {
 	require.NoError(t, err)
 
 	// High concurrency test
-	var wg sync.WaitGroup
 	numEvents := 500
 	numGoroutines := 10
+	wg.Add(numEvents)
+
+	start := time.Now()
 
 	for g := 0; g < numGoroutines; g++ {
-		wg.Add(1)
 		go func(goroutineID int) {
-			defer wg.Done()
-
 			for i := 0; i < numEvents/numGoroutines; i++ {
 				eventID := fmt.Sprintf("stress-%d-%d", goroutineID, i)
 
@@ -663,9 +661,10 @@ func TestOptimizedEventDispatcher_StressTest(t *testing.T) {
 	}
 
 	wg.Wait()
+	totalTime := time.Since(start)
 
-	// Wait for all events to be processed
-	time.Sleep(2 * time.Second)
+	eventsPerSecond := float64(numEvents) / totalTime.Seconds()
+	t.Logf("Processed %d events in %v (%.0f events/sec)", numEvents, totalTime, eventsPerSecond)
 
 	// Verify all events were processed
 	mu.Lock()

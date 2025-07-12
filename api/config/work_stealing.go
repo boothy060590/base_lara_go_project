@@ -13,8 +13,8 @@ func WorkStealingConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"enabled": env.GetBool("WORK_STEALING_ENABLED", true),
 		"workers": map[string]interface{}{
-			"num_workers":      env.GetInt("WORK_STEALING_NUM_WORKERS", runtime.NumCPU()),
-			"queue_size":       env.GetInt("WORK_STEALING_QUEUE_SIZE", 1024),
+			"num_workers":      env.GetInt("WORK_STEALING_NUM_WORKERS", 16),   // Optimal for MySQL workloads
+			"queue_size":       env.GetInt("WORK_STEALING_QUEUE_SIZE", 50000), // Optimal for high-throughput workloads
 			"steal_threshold":  env.GetInt("WORK_STEALING_THRESHOLD", 2),
 			"steal_batch_size": env.GetInt("WORK_STEALING_BATCH_SIZE", 10),
 			"idle_timeout":     env.GetInt("WORK_STEALING_IDLE_TIMEOUT", 100),

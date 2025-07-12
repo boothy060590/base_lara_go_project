@@ -449,6 +449,8 @@ func TestQueueConcurrencyStress(t *testing.T) {
 	var totalPushed int64
 	var totalPopped int64
 
+	start := time.Now()
+
 	// Stress test with mixed operations
 	wg.Add(numGoroutines)
 	for i := 0; i < numGoroutines; i++ {
@@ -487,6 +489,11 @@ func TestQueueConcurrencyStress(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+
+	totalTime := time.Since(start)
+	totalOperations := numGoroutines * numOperations * 2 // push + pop per operation
+	operationsPerSecond := float64(totalOperations) / totalTime.Seconds()
+	t.Logf("Processed %d operations in %v (%.0f ops/sec)", totalOperations, totalTime, operationsPerSecond)
 
 	// Verify queue is empty
 	size, err := queue.Size()
