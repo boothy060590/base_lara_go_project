@@ -3,123 +3,186 @@ package logging_core
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
-	"time"
 
 	go_core "base_lara_go_project/app/core/go_core"
-	config_core "base_lara_go_project/app/core/laravel_core/config"
 )
 
-// OptimizedFileHandler provides high-performance file logging with go_core optimizations
+// OptimizedFileHandler provides high-performance file logging
 type OptimizedFileHandler[T any] struct {
-	*go_core.FileLogHandler[T]
-	config *config_core.ConfigFacade
-	path   string
-	mu     sync.Mutex
+	path    string
+	file    *os.File
+	mu      sync.Mutex
+	metrics *go_core.LoggingMetrics
 }
 
 // NewOptimizedFileHandler creates a new optimized file handler
-func NewOptimizedFileHandler[T any](config *config_core.ConfigFacade, path string) (*OptimizedFileHandler[T], error) {
-	// Convert config to go_core config
-	goCoreConfig := convertToGoCoreConfig(config)
+func NewOptimizedFileHandler[T any](path string) (*OptimizedFileHandler[T], error) {
+	// Ensure directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log directory: %w", err)
+	}
 
-	// Create go_core file handler
-	fileHandler, err := go_core.NewFileLogHandler[T](goCoreConfig, path)
+	// Open file
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create file handler: %w", err)
+		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
 	return &OptimizedFileHandler[T]{
-		FileLogHandler: fileHandler,
-		config:         config,
-		path:           path,
+		path:    path,
+		file:    file,
+		metrics: &go_core.LoggingMetrics{},
 	}, nil
 }
 
-// Handle implements LogHandler interface with additional optimizations
+// Handle implements LogHandler interface
 func (h *OptimizedFileHandler[T]) Handle(entry go_core.LogEntry[T]) error {
-	// Add Laravel-specific formatting
-	formattedEntry := h.formatForLaravel(entry)
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-	// Use the underlying go_core handler
-	return h.FileLogHandler.Handle(formattedEntry)
+	// Format log entry
+	logLine := fmt.Sprintf("[%s] %s: %s\n",
+		entry.Timestamp.Format("2006-01-02 15:04:05"),
+		entry.Level.String(),
+		entry.Message)
+
+	// Write to file
+	_, err := h.file.WriteString(logLine)
+	if err != nil {
+		return fmt.Errorf("failed to write to log file: %w", err)
+	}
+
+	// Update metrics
+	h.metrics.EntriesLogged++
+
+	return nil
 }
 
-// formatForLaravel formats the log entry for Laravel compatibility
-func (h *OptimizedFileHandler[T]) formatForLaravel(entry go_core.LogEntry[T]) go_core.LogEntry[T] {
-	// Add Laravel-specific context if needed
-	// This could include request ID, user ID, etc.
-	return entry
+// ShouldHandle determines if the handler should handle the given level
+func (h *OptimizedFileHandler[T]) ShouldHandle(level go_core.LogLevel) bool {
+	return level >= go_core.LogLevelInfo
 }
 
-// OptimizedDailyHandler provides high-performance daily rotating file logging
+// GetLevel returns the handler's level
+func (h *OptimizedFileHandler[T]) GetLevel() go_core.LogLevel {
+	return go_core.LogLevelInfo
+}
+
+// Close closes the file handler
+func (h *OptimizedFileHandler[T]) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.file.Close()
+}
+
+// Flush flushes the file handler
+func (h *OptimizedFileHandler[T]) Flush() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.file.Sync()
+}
+
+// GetMetrics returns handler metrics
+func (h *OptimizedFileHandler[T]) GetMetrics() *go_core.LoggingMetrics {
+	return h.metrics
+}
+
+// OptimizedDailyHandler provides high-performance daily file logging
 type OptimizedDailyHandler[T any] struct {
-	*go_core.FileLogHandler[T]
-	config     *config_core.ConfigFacade
 	basePath   string
 	currentDay string
+	handler    *OptimizedFileHandler[T]
 	mu         sync.Mutex
 }
 
 // NewOptimizedDailyHandler creates a new optimized daily handler
-func NewOptimizedDailyHandler[T any](config *config_core.ConfigFacade, basePath string) (*OptimizedDailyHandler[T], error) {
-	// Convert config to go_core config
-	goCoreConfig := convertToGoCoreConfig(config)
-
-	// Get today's file path
-	today := time.Now().Format("2006-01-02")
-	path := fmt.Sprintf("%s-%s.log", basePath, today)
-
-	// Create go_core file handler
-	fileHandler, err := go_core.NewFileLogHandler[T](goCoreConfig, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create daily handler: %w", err)
-	}
-
+func NewOptimizedDailyHandler[T any](basePath string) (*OptimizedDailyHandler[T], error) {
 	return &OptimizedDailyHandler[T]{
-		FileLogHandler: fileHandler,
-		config:         config,
-		basePath:       basePath,
-		currentDay:     today,
+		basePath: basePath,
 	}, nil
 }
 
-// Handle implements LogHandler interface with daily rotation
+// Handle implements LogHandler interface
 func (h *OptimizedDailyHandler[T]) Handle(entry go_core.LogEntry[T]) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	// Check if we need to rotate to a new day
-	today := time.Now().Format("2006-01-02")
-	if today != h.currentDay {
-		// Create new file handler for the new day
-		path := fmt.Sprintf("%s-%s.log", h.basePath, today)
-		newHandler, err := go_core.NewFileLogHandler[T](convertToGoCoreConfig(h.config), path)
-		if err == nil {
-			// Close old handler
-			h.FileLogHandler.Close()
-			// Update to new handler
-			h.FileLogHandler = newHandler
-			h.currentDay = today
+	today := entry.Timestamp.Format("2006-01-02")
+	if h.currentDay != today {
+		// Close old handler if exists
+		if h.handler != nil {
+			h.handler.Close()
 		}
+
+		// Create new handler for today
+		logPath := fmt.Sprintf("%s-%s.log", h.basePath, today)
+		handler, err := NewOptimizedFileHandler[T](logPath)
+		if err != nil {
+			return fmt.Errorf("failed to create daily handler: %w", err)
+		}
+
+		h.handler = handler
+		h.currentDay = today
 	}
 
-	// Use the underlying go_core handler
-	return h.FileLogHandler.Handle(entry)
+	// Handle the entry
+	return h.handler.Handle(entry)
+}
+
+// ShouldHandle determines if the handler should handle the given level
+func (h *OptimizedDailyHandler[T]) ShouldHandle(level go_core.LogLevel) bool {
+	return level >= go_core.LogLevelInfo
+}
+
+// GetLevel returns the handler's level
+func (h *OptimizedDailyHandler[T]) GetLevel() go_core.LogLevel {
+	return go_core.LogLevelInfo
+}
+
+// Close closes the daily handler
+func (h *OptimizedDailyHandler[T]) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.handler != nil {
+		return h.handler.Close()
+	}
+	return nil
+}
+
+// Flush flushes the daily handler
+func (h *OptimizedDailyHandler[T]) Flush() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.handler != nil {
+		return h.handler.Flush()
+	}
+	return nil
+}
+
+// GetMetrics returns handler metrics
+func (h *OptimizedDailyHandler[T]) GetMetrics() *go_core.LoggingMetrics {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.handler != nil {
+		return h.handler.GetMetrics()
+	}
+	return &go_core.LoggingMetrics{}
 }
 
 // OptimizedStackHandler provides high-performance stack logging
 type OptimizedStackHandler[T any] struct {
 	handlers []go_core.LogHandler[T]
-	config   *config_core.ConfigFacade
 	mu       sync.RWMutex
 }
 
 // NewOptimizedStackHandler creates a new optimized stack handler
-func NewOptimizedStackHandler[T any](config *config_core.ConfigFacade, handlers []go_core.LogHandler[T]) *OptimizedStackHandler[T] {
+func NewOptimizedStackHandler[T any](handlers []go_core.LogHandler[T]) *OptimizedStackHandler[T] {
 	return &OptimizedStackHandler[T]{
 		handlers: handlers,
-		config:   config,
 	}
 }
 
@@ -234,16 +297,14 @@ func (h *OptimizedNullHandler[T]) Handle(entry go_core.LogEntry[T]) error {
 
 // OptimizedSentryHandler provides high-performance Sentry integration
 type OptimizedSentryHandler[T any] struct {
-	config *config_core.ConfigFacade
-	level  go_core.LogLevel
-	mu     sync.Mutex
+	level go_core.LogLevel
+	mu    sync.Mutex
 }
 
 // NewOptimizedSentryHandler creates a new optimized Sentry handler
-func NewOptimizedSentryHandler[T any](config *config_core.ConfigFacade) *OptimizedSentryHandler[T] {
+func NewOptimizedSentryHandler[T any]() *OptimizedSentryHandler[T] {
 	return &OptimizedSentryHandler[T]{
-		config: config,
-		level:  go_core.LogLevelError, // Only handle errors and above
+		level: go_core.LogLevelError, // Only handle errors and above
 	}
 }
 
@@ -288,16 +349,14 @@ func (h *OptimizedSentryHandler[T]) Flush() error {
 
 // OptimizedSlackHandler provides high-performance Slack integration
 type OptimizedSlackHandler[T any] struct {
-	config *config_core.ConfigFacade
-	level  go_core.LogLevel
-	mu     sync.Mutex
+	level go_core.LogLevel
+	mu    sync.Mutex
 }
 
 // NewOptimizedSlackHandler creates a new optimized Slack handler
-func NewOptimizedSlackHandler[T any](config *config_core.ConfigFacade) *OptimizedSlackHandler[T] {
+func NewOptimizedSlackHandler[T any]() *OptimizedSlackHandler[T] {
 	return &OptimizedSlackHandler[T]{
-		config: config,
-		level:  go_core.LogLevelError, // Only handle errors and above
+		level: go_core.LogLevelError, // Only handle errors and above
 	}
 }
 

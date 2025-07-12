@@ -4,27 +4,24 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	go_core "base_lara_go_project/app/core/go_core"
-	config_core "base_lara_go_project/app/core/laravel_core/config"
-	"sync/atomic"
 )
 
 // EventLogHandler provides high-performance event-based logging
 type EventLogHandler[T any] struct {
 	eventDispatcher go_core.EventDispatcher[T]
-	config          *config_core.ConfigFacade
 	level           go_core.LogLevel
 	metrics         *go_core.LoggingMetrics
 	mu              sync.RWMutex
 }
 
 // NewEventLogHandler creates a new event-based log handler
-func NewEventLogHandler[T any](eventDispatcher go_core.EventDispatcher[T], config *config_core.ConfigFacade) *EventLogHandler[T] {
+func NewEventLogHandler[T any](eventDispatcher go_core.EventDispatcher[T]) *EventLogHandler[T] {
 	return &EventLogHandler[T]{
 		eventDispatcher: eventDispatcher,
-		config:          config,
 		level:           go_core.LogLevelDebug,
 		metrics:         &go_core.LoggingMetrics{},
 	}
@@ -113,18 +110,16 @@ func (h *EventLogHandler[T]) GetMetrics() *go_core.LoggingMetrics {
 type LogEventListener[T any] struct {
 	eventDispatcher go_core.EventDispatcher[T]
 	handlers        map[string]go_core.LogHandler[T]
-	config          *config_core.ConfigFacade
 	metrics         *go_core.LoggingMetrics
 	mu              sync.RWMutex
 	listening       int32
 }
 
 // NewLogEventListener creates a new log event listener
-func NewLogEventListener[T any](eventDispatcher go_core.EventDispatcher[T], config *config_core.ConfigFacade) *LogEventListener[T] {
+func NewLogEventListener[T any](eventDispatcher go_core.EventDispatcher[T]) *LogEventListener[T] {
 	return &LogEventListener[T]{
 		eventDispatcher: eventDispatcher,
 		handlers:        make(map[string]go_core.LogHandler[T]),
-		config:          config,
 		metrics:         &go_core.LoggingMetrics{},
 	}
 }
@@ -224,11 +219,10 @@ func (l *LogEventListener[T]) GetMetrics() *go_core.LoggingMetrics {
 	return l.metrics
 }
 
-// LogEventProcessor processes log events with advanced features
+// LogEventProcessor processes log events in batches
 type LogEventProcessor[T any] struct {
 	eventDispatcher go_core.EventDispatcher[T]
 	handlers        map[string]go_core.LogHandler[T]
-	config          *config_core.ConfigFacade
 	batchSize       int
 	batchTTL        time.Duration
 	metrics         *go_core.LoggingMetrics
@@ -237,11 +231,10 @@ type LogEventProcessor[T any] struct {
 }
 
 // NewLogEventProcessor creates a new log event processor
-func NewLogEventProcessor[T any](eventDispatcher go_core.EventDispatcher[T], config *config_core.ConfigFacade) *LogEventProcessor[T] {
+func NewLogEventProcessor[T any](eventDispatcher go_core.EventDispatcher[T]) *LogEventProcessor[T] {
 	return &LogEventProcessor[T]{
 		eventDispatcher: eventDispatcher,
 		handlers:        make(map[string]go_core.LogHandler[T]),
-		config:          config,
 		batchSize:       100,
 		batchTTL:        5 * time.Second,
 		metrics:         &go_core.LoggingMetrics{},

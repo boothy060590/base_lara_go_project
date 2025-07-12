@@ -1,8 +1,12 @@
 package config
 
-import "base_lara_go_project/app/core/laravel_core/env"
+import (
+	"base_lara_go_project/app/core/go_core"
+	"base_lara_go_project/app/core/laravel_core/env"
+)
 
-// GoroutineConfig returns the goroutine configuration with fallback values
+// GoroutineConfig returns the goroutine optimization configuration with environment variable fallbacks
+// This config defines goroutine pools, work-stealing settings, and performance optimization parameters
 func GoroutineConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"enabled": env.GetBool("GOROUTINE_ENABLED", true),
@@ -60,4 +64,10 @@ func GoroutineConfig() map[string]interface{} {
 			"timeout":        env.GetInt("GOROUTINE_CACHE_TIMEOUT", 5),
 		},
 	}
+}
+
+// init automatically registers this config with the global config loader
+// This ensures the goroutine config is available via config.Get("goroutine") and dot notation
+func init() {
+	go_core.RegisterGlobalConfig("goroutine", GoroutineConfig)
 }

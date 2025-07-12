@@ -1,8 +1,12 @@
 package config
 
-import "base_lara_go_project/app/core/laravel_core/env"
+import (
+	"base_lara_go_project/app/core/go_core"
+	"base_lara_go_project/app/core/laravel_core/env"
+)
 
-// ContextConfig returns the context configuration with fallback values
+// ContextConfig returns the context optimization configuration with environment variable fallbacks
+// This config defines context timeouts, retry policies, and optimization settings for different operations
 func ContextConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"enabled": env.GetBool("CONTEXT_ENABLED", true),
@@ -80,4 +84,10 @@ func ContextConfig() map[string]interface{} {
 			"cancellation_propagation": env.GetBool("CONTEXT_CANCELLATION_PROPAGATION", true),
 		},
 	}
+}
+
+// init automatically registers this config with the global config loader
+// This ensures the context config is available via config.Get("context") and dot notation
+func init() {
+	go_core.RegisterGlobalConfig("context", ContextConfig)
 }

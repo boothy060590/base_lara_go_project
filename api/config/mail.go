@@ -1,31 +1,30 @@
 package config
 
-import "base_lara_go_project/app/core/laravel_core/env"
+import (
+	"base_lara_go_project/app/core/go_core"
+	"base_lara_go_project/app/core/laravel_core/env"
+)
 
-// MailConfig returns the mail configuration with fallback values
+// MailConfig returns the mail configuration with environment variable fallbacks
+// This config defines mail drivers, SMTP settings, and mail server parameters
 func MailConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"default": env.Get("MAIL_MAILER", "local"),
+		"default": env.Get("MAIL_MAILER", "smtp"),
 		"mailers": map[string]interface{}{
 			"smtp": map[string]interface{}{
-				"host":     env.Get("MAIL_HOST", "localhost"),
-				"port":     env.Get("MAIL_PORT", "1025"),
-				"username": env.Get("MAIL_USERNAME", ""),
-				"password": env.Get("MAIL_PASSWORD", ""),
+				"transport":  "smtp",
+				"host":       env.Get("MAIL_HOST", "smtp.mailgun.org"),
+				"port":       env.Get("MAIL_PORT", "587"),
+				"encryption": env.Get("MAIL_ENCRYPTION", "tls"),
+				"username":   env.Get("MAIL_USERNAME", ""),
+				"password":   env.Get("MAIL_PASSWORD", ""),
 			},
-			"local": map[string]interface{}{
-				"driver": "local",
-				"path":   env.Get("MAIL_PATH", "storage/logs/mail.log"),
-			},
-			"mailhog": map[string]interface{}{
-				"driver": "mailhog",
-				"host":   env.Get("MAILHOG_HOST", "localhost"),
-				"port":   env.Get("MAILHOG_PORT", "1025"),
-			},
-		},
-		"from": map[string]interface{}{
-			"address": env.Get("MAIL_FROM_ADDRESS", "noreply@example.com"),
-			"name":    env.Get("MAIL_FROM_NAME", "Base Laravel Go Project"),
 		},
 	}
+}
+
+// init automatically registers this config with the global config loader
+// This ensures the mail config is available via config.Get("mail") and dot notation
+func init() {
+	go_core.RegisterGlobalConfig("mail", MailConfig)
 }

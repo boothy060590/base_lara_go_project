@@ -7,24 +7,21 @@ import (
 	"time"
 
 	go_core "base_lara_go_project/app/core/go_core"
-	config_core "base_lara_go_project/app/core/laravel_core/config"
 	"sync/atomic"
 )
 
 // QueueLogHandler provides high-performance queue-based logging
 type QueueLogHandler[T any] struct {
 	queue   go_core.Queue[T]
-	config  *config_core.ConfigFacade
 	level   go_core.LogLevel
 	metrics *go_core.LoggingMetrics
 	mu      sync.RWMutex
 }
 
 // NewQueueLogHandler creates a new queue-based log handler
-func NewQueueLogHandler[T any](queue go_core.Queue[T], config *config_core.ConfigFacade) *QueueLogHandler[T] {
+func NewQueueLogHandler[T any](queue go_core.Queue[T]) *QueueLogHandler[T] {
 	return &QueueLogHandler[T]{
 		queue:   queue,
-		config:  config,
 		level:   go_core.LogLevelDebug,
 		metrics: &go_core.LoggingMetrics{},
 	}
@@ -121,22 +118,20 @@ type LogJob[T any] struct {
 	HandlerID string              `json:"handler_id"`
 }
 
-// LogQueueProcessor processes log jobs from the queue
+// LogQueueProcessor processes log events from a queue
 type LogQueueProcessor[T any] struct {
 	queue      go_core.Queue[T]
 	handlers   map[string]go_core.LogHandler[T]
-	config     *config_core.ConfigFacade
 	metrics    *go_core.LoggingMetrics
 	mu         sync.RWMutex
 	processing int32
 }
 
 // NewLogQueueProcessor creates a new log queue processor
-func NewLogQueueProcessor[T any](queue go_core.Queue[T], config *config_core.ConfigFacade) *LogQueueProcessor[T] {
+func NewLogQueueProcessor[T any](queue go_core.Queue[T]) *LogQueueProcessor[T] {
 	return &LogQueueProcessor[T]{
 		queue:    queue,
 		handlers: make(map[string]go_core.LogHandler[T]),
-		config:   config,
 		metrics:  &go_core.LoggingMetrics{},
 	}
 }
@@ -240,11 +235,10 @@ func (p *LogQueueProcessor[T]) GetMetrics() *go_core.LoggingMetrics {
 	return p.metrics
 }
 
-// BatchLogProcessor processes log jobs in batches for better performance
+// BatchLogProcessor processes log events in batches from a queue
 type BatchLogProcessor[T any] struct {
 	queue      go_core.Queue[T]
 	handlers   map[string]go_core.LogHandler[T]
-	config     *config_core.ConfigFacade
 	batchSize  int
 	batchTTL   time.Duration
 	metrics    *go_core.LoggingMetrics
@@ -253,11 +247,10 @@ type BatchLogProcessor[T any] struct {
 }
 
 // NewBatchLogProcessor creates a new batch log processor
-func NewBatchLogProcessor[T any](queue go_core.Queue[T], config *config_core.ConfigFacade) *BatchLogProcessor[T] {
+func NewBatchLogProcessor[T any](queue go_core.Queue[T]) *BatchLogProcessor[T] {
 	return &BatchLogProcessor[T]{
 		queue:     queue,
 		handlers:  make(map[string]go_core.LogHandler[T]),
-		config:    config,
 		batchSize: 100,
 		batchTTL:  5 * time.Second,
 		metrics:   &go_core.LoggingMetrics{},

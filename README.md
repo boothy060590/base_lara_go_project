@@ -3,6 +3,7 @@ A Go-based web application with Laravel-style architecture, featuring async even
 
 🚀 Features
 Laravel-Style Architecture: Familiar patterns and structure for Laravel developers
+Dynamic Configuration System: Zero-config, automatic loading with Laravel-style dot notation
 Service Layer Architecture: Clean separation between business logic and data access
 Service Facades: Laravel-style static access to services
 Service Decorators: Cross-cutting concerns (logging, caching, auditing)
@@ -17,6 +18,7 @@ Vue.js Frontend: Modern reactive frontend with form validation
 
 🏗️ Architecture
 Core Components
+Dynamic Config System: Zero-configuration, automatic loading with Laravel-style access
 Service Layer: Business logic with proper separation from data access
 Repository Layer: Data persistence and retrieval with caching
 Service Facades: Laravel-style static access to services
@@ -32,6 +34,33 @@ Controllers → Services → Repositories → Models
 Facades Business Logic CRUD Cache/DB
 ↓ ↓
 Decorators Cross-Cutting
+
+### Configuration System
+
+The framework features a **dynamic configuration system** that provides:
+
+- **Zero Configuration**: Drop Go config files in `api/config/` and they're automatically available
+- **Laravel-Style Access**: Use dot notation like `config.Get("app.name")` or `config.GetString("database.connections.mysql.host")`
+- **Environment Integration**: Built-in environment variable fallbacks with sensible defaults
+- **Type-Safe Access**: Helper methods for strings, integers, and booleans
+- **Automatic Caching**: Config values are cached for performance
+- **Thread-Safe**: All operations are concurrency-safe
+
+```go
+// Access config values with dot notation
+appName := config.GetString("app.name")
+debugMode := config.GetBool("app.debug")
+port := config.GetInt("app.port")
+
+// With default values
+timeout := config.GetInt("my.timeout", 30)
+enabled := config.GetBool("my.enabled", true)
+
+// Check if config exists
+if config.Has("my.feature") {
+    // Use the config
+}
+```
 
 ### Queue Structure
 
@@ -76,7 +105,7 @@ make clean
 make install_dev
 ```
 
-- You’ll be prompted for:
+- You'll be prompted for:
   - Queue mode: SQS/ElasticMQ (multi-worker) or sync (single worker)
   - Logging: Sentry or local
 - All config, env, and Docker Compose files are generated from templates.
@@ -93,14 +122,17 @@ bash setup/install.sh
 
 ## 🛠️ Configuration & Templates
 
-- All configuration is Go-native and `.env`-driven.
+- **Dynamic Configuration**: All configuration is Go-native with automatic loading from `api/config/` directory
+- **Environment-Driven**: Configuration values fall back to environment variables with sensible defaults
+- **Laravel-Style Access**: Use dot notation to access nested configuration values
+- **Zero Configuration**: Just drop Go config files and they're automatically available
 - The main env file is generated as `api/env/.env.worker`.
 - For multi-worker setups, additional envs are generated as needed.
 - All environment and config files are generated from `.template` files (e.g. `.env.template`, `docker-compose.template.yaml`).
 - **Only template files are committed to git; generated files are ignored.**
 - To change domains or environments, use `make switch_domain` and rerun the install.
 
-See [`/docs/config/CONFIGURATION.md`](docs/config/CONFIGURATION.md) for details.
+See [`/docs/config/CONFIGURATION.md`](docs/config/CONFIGURATION.md) and [`/api/config/README.md`](api/config/README.md) for details.
 
 ---
 
@@ -119,6 +151,7 @@ See [`/docs/queues/MULTI_WORKER_INFRASTRUCTURE.md`](docs/queues/MULTI_WORKER_INF
 
 - [`/docs/architecture/`](docs/architecture/) — Architecture, service vs repository, etc.
 - [`/docs/config/`](docs/config/) — Configuration system and environment variables
+- [`/api/config/README.md`](api/config/README.md) — Dynamic configuration system documentation
 - [`/docs/setup/`](docs/setup/) — Setup scripts, Sentry, and install flow
 - [`/docs/queues/`](docs/queues/) — Multi-worker and queue infrastructure
 - [`/docs/performance/`](docs/performance/) — Performance analysis and optimization
@@ -132,7 +165,7 @@ base_lara_go_project/
 ├── api/ # Go backend application
 │ ├── app/
 │ ├── bootstrap/
-│ ├── config/
+│ ├── config/ # Dynamic configuration files
 │ ├── env/
 │ ├── ...
 ├── frontend/ # Vue.js frontend
@@ -158,6 +191,30 @@ base_lara_go_project/
 ---
 
 ## 📚 Usage Examples
+
+### Configuration Usage
+
+```go
+import "base_lara_go_project/config"
+
+// Laravel-style config access
+appName := config.GetString("app.name")
+debugMode := config.GetBool("app.debug")
+port := config.GetInt("app.port")
+
+// With default values
+timeout := config.GetInt("my.timeout", 30)
+enabled := config.GetBool("my.enabled", true)
+
+// Check if config exists
+if config.Has("my.feature") {
+    // Use the config
+}
+
+// Using facades
+import facades_core "base_lara_go_project/app/core/laravel_core/facades"
+appName := facades_core.GetString("app.name")
+```
 
 ### Service Layer Usage
 
