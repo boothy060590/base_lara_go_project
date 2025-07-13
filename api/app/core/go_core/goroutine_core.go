@@ -123,7 +123,7 @@ func (wp *WorkerPool[T]) newWorker(id int) *Worker[T] {
 		jobQueue: wp.jobQueue,
 		ctx:      ctx,
 		cancel:   cancel,
-		active:   true,
+		active:   false, // Workers start as inactive
 		metrics:  wp.metrics,
 	}
 }

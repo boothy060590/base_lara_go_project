@@ -71,6 +71,7 @@ type WorkQueue[T any] struct {
 	size     int
 	mu       sync.Mutex
 	notEmpty *sync.Cond
+	shutdown bool
 }
 
 // WorkItem represents a work item in the queue
@@ -167,6 +168,12 @@ func (wsp *WorkStealingPool[T]) SubmitAsync(item WorkItem[T]) <-chan error {
 func (wsp *WorkStealingPool[T]) Shutdown() {
 	wsp.cancel()
 
+	// Shutdown all queues to wake up any waiting workers
+	wsp.globalQueue.Shutdown()
+	for _, worker := range wsp.workers {
+		worker.localQueue.Shutdown()
+	}
+
 	// Wait for all workers to finish
 	var wg sync.WaitGroup
 	for _, worker := range wsp.workers {
@@ -215,6 +222,13 @@ func (w *WorkStealingWorker[T]) start() {
 
 // runWorkLoop is the main work processing loop with stealing
 func (w *WorkStealingWorker[T]) runWorkLoop() {
+	// Check for context cancellation first
+	select {
+	case <-w.ctx.Done():
+		return
+	default:
+	}
+
 	// Try to get work from local queue first
 	if item, ok := w.localQueue.TryPop(); ok {
 		atomic.StoreInt32(&w.active, 1)
@@ -238,8 +252,13 @@ func (w *WorkStealingWorker[T]) runWorkLoop() {
 		return
 	}
 
-	// No work available, sleep briefly
-	time.Sleep(w.config.IdleTimeout)
+	// No work available, sleep briefly with context check
+	select {
+	case <-w.ctx.Done():
+		return
+	case <-time.After(w.config.IdleTimeout):
+		// Continue loop
+	}
 }
 
 // tryStealWork attempts to steal work from other workers
@@ -274,6 +293,13 @@ func (w *WorkStealingWorker[T]) tryStealWork() bool {
 
 // processWorkItem processes a single work item
 func (w *WorkStealingWorker[T]) processWorkItem(item WorkItem[T]) {
+	// Check for context cancellation before processing
+	select {
+	case <-w.ctx.Done():
+		return
+	default:
+	}
+
 	ctx := w.ctx
 	if item.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -292,6 +318,18 @@ func (w *WorkStealingWorker[T]) processWorkItem(item WorkItem[T]) {
 // shutdown gracefully shuts down the worker
 func (w *WorkStealingWorker[T]) shutdown() {
 	w.cancel()
+
+	// Wait for any active work to complete (with timeout)
+	timeout := time.After(5 * time.Second)
+	for atomic.LoadInt32(&w.active) > 0 {
+		select {
+		case <-timeout:
+			// Force shutdown after timeout
+			return
+		case <-time.After(10 * time.Millisecond):
+			// Check again
+		}
+	}
 }
 
 // NewWorkQueue creates a new work queue
@@ -309,6 +347,10 @@ func (wq *WorkQueue[T]) Push(item WorkItem[T]) error {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
+	if wq.shutdown {
+		return fmt.Errorf("queue is shutdown")
+	}
+
 	if wq.isFull() {
 		return fmt.Errorf("queue is full")
 	}
@@ -324,7 +366,7 @@ func (wq *WorkQueue[T]) TryPush(item WorkItem[T]) bool {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
-	if wq.isFull() {
+	if wq.shutdown || wq.isFull() {
 		return false
 	}
 
@@ -339,8 +381,13 @@ func (wq *WorkQueue[T]) Pop() (WorkItem[T], bool) {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
-	for wq.isEmpty() {
+	for wq.isEmpty() && !wq.shutdown {
 		wq.notEmpty.Wait()
+	}
+
+	if wq.shutdown {
+		var zero WorkItem[T]
+		return zero, false
 	}
 
 	item := wq.items[wq.head]
@@ -353,7 +400,7 @@ func (wq *WorkQueue[T]) TryPop() (WorkItem[T], bool) {
 	wq.mu.Lock()
 	defer wq.mu.Unlock()
 
-	if wq.isEmpty() {
+	if wq.isEmpty() || wq.shutdown {
 		var zero WorkItem[T]
 		return zero, false
 	}
@@ -390,6 +437,14 @@ func (wq *WorkQueue[T]) isEmpty() bool {
 // isFull checks if the queue is full
 func (wq *WorkQueue[T]) isFull() bool {
 	return (wq.tail+1)%wq.size == wq.head
+}
+
+// Shutdown marks the queue as shutdown and wakes up any waiting goroutines
+func (wq *WorkQueue[T]) Shutdown() {
+	wq.mu.Lock()
+	defer wq.mu.Unlock()
+	wq.shutdown = true
+	wq.notEmpty.Broadcast()
 }
 
 // NewWorkStealingMetrics creates new work stealing metrics

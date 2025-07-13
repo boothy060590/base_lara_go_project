@@ -188,6 +188,8 @@ show_usage() {
     echo "  integration/validation Run integration tests for validation"
     echo "  unit/adapter           Run unit tests for adapter"
     echo "  integration/adapter    Run integration tests for adapter"
+    echo "  unit/goroutine         Run unit tests for goroutine"
+    echo "  integration/goroutine  Run integration tests for goroutine"
     echo "  benchmarks             Run benchmarks"
     echo "  race                   Run race detection tests"
     echo "  help                   Show this help message"
@@ -298,6 +300,12 @@ else
             ;;
         "integration/adapter")
             run_test_category "integration/adapter" "integration/adapter" "Integration Adapter"
+            ;;
+        "unit/goroutine")
+            run_test_category "unit/goroutine" "unit/goroutine" "Unit Goroutine"
+            ;;
+        "integration/goroutine")
+            run_test_category "integration/goroutine" "integration/goroutine" "Integration Goroutine"
             ;;
         "benchmarks")
             run_benchmarks
