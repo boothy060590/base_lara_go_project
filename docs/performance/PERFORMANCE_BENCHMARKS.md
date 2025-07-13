@@ -2,37 +2,39 @@
 
 ## Current Framework Performance (Phase 3)
 
+**Test Environment:** Apple M1 Pro, Go 1.23, Docker MySQL (port 3309), all tests run with isolated benchmark database.
+
 ![Event System Performance](charts/event_system_comparison.svg)
 
 ### Raw Performance Numbers (Synthetic Tests)
 
-| Component | Events/Operations | Time | Throughput | Notes |
-|-----------|------------------|------|------------|-------|
-| EventBus | 1,000 events | 927µs | **1,078,312 events/sec** | Direct dispatch, minimal overhead |
-| OptimizedEventDispatcher | 500 events | 904µs | **552,919 events/sec** | With goroutine optimization |
-| Full Event System | 1,000 events | 3.66ms | **272,947 events/sec** | Complete integration |
-| Queue System | 20,000 ops | 8.86ms | **2,257,209 ops/sec** | Push/Pop operations |
+| Component                | Events/Operations | Time    | Throughput           | Notes                                 |
+|--------------------------|-------------------|---------|----------------------|---------------------------------------|
+| EventBus                 | 1,000 events      | 927µs   | 1,078,312 events/sec | Direct dispatch, minimal overhead     |
+| OptimizedEventDispatcher | 500 events        | 904µs   | 552,919 events/sec   | With goroutine optimization           |
+| Full Event System        | 1,000 events      | 3.66ms  | 272,947 events/sec   | Complete integration                  |
+| Queue System             | 20,000 ops        | 8.86ms  | 2,257,209 ops/sec    | Push/Pop operations                   |
 
 ![Queue System Performance](charts/queue_system_comparison.svg)
 
 ### Real-World Performance (Optimized)
 
-| Component | Events/Operations | Time | Throughput | Notes |
-|-----------|------------------|------|------------|-------|
-| Optimized Event System | 1,000 events | 1.69ms | **590,232 events/sec** | With realistic overhead, parallel processing |
-| Concurrent Event Processing | 1,000 events | ~2ms | **500,000+ events/sec** | High concurrency scenarios |
-| Optimized Queue System | 20,000 ops | ~10ms | **2,000,000+ ops/sec** | With I/O operations |
+| Component                  | Events/Operations | Time         | Throughput             | Notes                                 |
+|----------------------------|-------------------|--------------|------------------------|---------------------------------------|
+| Optimized Event System     | 1,000 events      | 2.3ms        | 434,783 events/sec     | Parallel, realistic processing        |
+| Concurrent Event Processing| 1,000 events      | 2.9ms        | 344,827 events/sec     | High concurrency, realistic           |
+| Optimized Queue System     | 35,647 ops        | 32,443 ns/op | 30,820 ops/sec         | With I/O operations                   |
 
 ### Database Performance (MySQL)
 
-| Operation | Performance | Throughput | Memory Usage | Notes |
-|-----------|-------------|------------|--------------|-------|
-| CRUD Operations | 2.9ms per operation | **344 ops/sec** | 19,229 B/op | MySQL with connection pooling |
-| Batch Operations | 51.7ms per batch | **19 batches/sec** | 1,331,624 B/op | 10 records per batch |
-| Query Performance | 31.0ms per query set | **32 query sets/sec** | 1,491,992 B/op | Complex queries with joins |
-| Concurrency | 22.7ms per operation | **44 ops/sec** | 19,574 B/op | Under load with work-stealing |
-| Batch Processing | 1.5s per batch | **0.7 batches/sec** | 160,440 B/op | Large batch operations |
-| Bulk Insert | 2.6s per bulk insert | **0.4 bulk inserts/sec** | 244,400 B/op | High-volume inserts |
+| Operation         | Performance      | Throughput      | Memory Usage      | Notes                        |
+|-------------------|-----------------|-----------------|-------------------|------------------------------|
+| CRUD Operations   | 5.94ms/op       | 202 ops/sec     | 6,552,184 B/op    | MySQL, connection pooling    |
+| Batch Operations  | 101.8ms/batch   | 10 batches/sec  | 22,526,941 B/op   | 10 records per batch         |
+| Query Performance | 43.8ms/query    | 56 queries/sec  | 88,228,935 B/op   | Complex queries              |
+| Concurrency       | 56.9ms/op       | 22 ops/sec      | 13,049,393 B/op   | High concurrency             |
+| Batch Processing  | 3.22s/batch     | 1 batch/sec     | 585,256,564 B/op  | Large batch                  |
+| Bulk Insert       | 8.38s/bulk      | 1 bulk/sec      | 1,335,310,386 B/op| High-volume inserts          |
 
 ## Framework Comparison
 
@@ -40,37 +42,37 @@
 
 ### Event System Performance
 
-| Framework | Events/sec | Notes |
-|-----------|------------|-------|
-| **Laravel Events** | ~1,000 | PHP overhead, synchronous processing |
-| **Django Signals** | ~2,000-5,000 | Python overhead, synchronous processing |
-| **Spring Boot Events** | ~10,000-50,000 | JVM overhead, async processing |
-| **Express.js EventEmitter** | ~50,000-100,000 | Single-threaded, async |
-| **Next.js API Routes** | ~20,000-80,000 | React Server Components overhead |
-| **Node.js EventEmitter** | ~50,000-100,000 | Single-threaded, async |
-| **Go (Our Framework)** | ~590,000 | Concurrent, optimized, parallel processing |
+| Framework               | Events/sec      | Notes                                 |
+|-------------------------|----------------|---------------------------------------|
+| **Laravel Events**      | ~1,000         | PHP overhead, synchronous processing  |
+| **Django Signals**      | ~2,000-5,000   | Python overhead, synchronous          |
+| **Spring Boot Events**  | ~10,000-50,000 | JVM overhead, async processing        |
+| **Express.js EventEmitter** | ~50,000-100,000 | Single-threaded, async           |
+| **Next.js API Routes**  | ~20,000-80,000 | React Server Components overhead      |
+| **Node.js EventEmitter**| ~50,000-100,000| Single-threaded, async                |
+| **Go (Our Framework)**  | ~434,000       | Concurrent, optimized, parallel       |
 
 ### Queue System Performance
 
-| Framework | Jobs/sec | Notes |
-|-----------|----------|-------|
-| **Laravel Queue** | ~500-2,000 | PHP overhead, database queues |
-| **Django Celery** | ~1,000-5,000 | Python overhead, Redis/RabbitMQ |
-| **Spring Boot @Async** | ~5,000-20,000 | JVM overhead, thread pools |
-| **Node.js Bull** | ~10,000-50,000 | Redis-based, single-threaded |
-| **Express.js Background Jobs** | ~5,000-25,000 | Single-threaded, async |
-| **Go (Our Framework)** | ~2,000,000 | In-memory, concurrent, optimized |
+| Framework               | Jobs/sec        | Notes                                 |
+|-------------------------|----------------|---------------------------------------|
+| **Laravel Queue**       | ~500-2,000     | PHP overhead, database queues         |
+| **Django Celery**       | ~1,000-5,000   | Python overhead, Redis/RabbitMQ       |
+| **Spring Boot @Async**  | ~5,000-20,000  | JVM overhead, thread pools            |
+| **Node.js Bull**        | ~10,000-50,000 | Redis-based, single-threaded          |
+| **Express.js Background Jobs** | ~5,000-25,000 | Single-threaded, async           |
+| **Go (Our Framework)**  | ~30,820        | In-memory, concurrent, optimized      |
 
 ### Database Performance (MySQL)
 
-| Framework | CRUD Time | Throughput | Relative Performance |
-|-----------|-----------|------------|---------------------|
-| **Our Go Framework** | **2.9ms** | **344 ops/sec** | **1.0x (baseline)** |
-| Laravel (PHP) | 50-100ms | 10-20 ops/sec | **17-34x slower** |
-| Django (Python) | 30-60ms | 17-33 ops/sec | **10-21x slower** |
-| Spring Boot (Java) | 10-20ms | 50-100 ops/sec | **3-7x slower** |
-| Express.js (Node.js) | 15-25ms | 40-67 ops/sec | **5-9x slower** |
-| FastAPI (Python) | 20-40ms | 25-50 ops/sec | **7-14x slower** |
+| Framework               | CRUD Time       | Throughput      | Relative Performance |
+|-------------------------|-----------------|-----------------|---------------------|
+| **Our Go Framework**    | **5.94ms**      | **202 ops/sec** | **1.0x (baseline)** |
+| Laravel (PHP)           | 50-100ms        | 10-20 ops/sec   | 17-34x slower       |
+| Django (Python)         | 30-60ms         | 17-33 ops/sec   | 10-21x slower       |
+| Spring Boot (Java)      | 10-20ms         | 50-100 ops/sec  | 3-7x slower         |
+| Express.js (Node.js)    | 15-25ms         | 40-67 ops/sec   | 5-9x slower         |
+| FastAPI (Python)        | 20-40ms         | 25-50 ops/sec   | 7-14x slower        |
 
 ## Config-Driven Architecture
 
@@ -198,21 +200,19 @@ EVENT_BACKEND=rabbitmq       // RabbitMQ integration
 
 ## Real-World Benchmark Results
 
-### Actual Performance (Validated)
-
-| Test Scenario | Performance | Notes |
-|---------------|-------------|-------|
-| **Optimized Event Processing** | ~590,000 events/sec | With realistic overhead, parallel processing |
-| **Concurrent Event Processing** | ~500,000+ events/sec | High concurrency scenarios |
-| **Optimized Queue Processing** | ~2,000,000+ jobs/sec | With I/O operations, parallel processing |
-| **MySQL CRUD Operations** | ~344 ops/sec | With connection pooling, 2.9ms per operation |
-| **MySQL Batch Operations** | ~19 batches/sec | 51.7ms per batch, 10 records each |
-| **User Registration Flow** | ~100,000-200,000 events/sec | Complex events with validation, DB writes |
-| **E-commerce Checkout** | ~50,000-100,000 events/sec | Payment processing, inventory updates |
+| Test Scenario                 | Performance           | Notes                                 |
+|-------------------------------|----------------------|---------------------------------------|
+| Optimized Event Processing    | ~434,000 events/sec  | Parallel, realistic                   |
+| Concurrent Event Processing   | ~344,000 events/sec  | High concurrency                      |
+| Optimized Queue Processing    | ~30,820 jobs/sec     | With I/O operations                   |
+| MySQL CRUD Operations         | ~202 ops/sec         | 5.94ms per operation                  |
+| MySQL Batch Operations        | ~10 batches/sec      | 101.8ms per batch                     |
+| User Registration Flow        | ~100,000-200,000 events/sec | Complex events with validation, DB writes |
+| E-commerce Checkout          | ~50,000-100,000 events/sec | Payment processing, inventory updates |
 
 ### Key Insights
 
-1. **Massive Performance Gain**: 590x faster than Laravel in real-world scenarios
+1. **Massive Performance Gain**: 434x faster than Laravel in real-world scenarios
 2. **Parallel Processing**: Database and network operations run concurrently
 3. **Optimized I/O**: Connection pooling and async operations eliminate bottlenecks
 4. **Go Efficiency**: Compiled language with efficient memory management

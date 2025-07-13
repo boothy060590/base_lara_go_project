@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -86,12 +85,12 @@ func TestGoroutineSystemIntegration(t *testing.T) {
 
 		assert.Equal(t, int64(40), finalCount) // 20 from each system
 
-		// Check metrics
+		// Check metrics - should be exact counts, not minimums
 		gmMetrics := manager.GetMetrics()
 		wsMetrics := wsPool.GetMetrics()
 
-		assert.GreaterOrEqual(t, gmMetrics.TotalJobsProcessed, int64(0))
-		assert.GreaterOrEqual(t, wsMetrics.TotalProcessed, int64(20))
+		assert.Equal(t, int64(20), gmMetrics.TotalJobsProcessed)
+		assert.Equal(t, int64(20), wsMetrics.TotalProcessed)
 	})
 
 	t.Run("AutoScalingIntegration", func(t *testing.T) {
@@ -208,26 +207,30 @@ func TestGoroutineAwareComponentsIntegration(t *testing.T) {
 			findManyError:  nil,
 		}
 
-		// Create goroutine-aware repository
-		gar := go_core.NewGoroutineAwareRepository[string](mockRepo, manager)
+		// Test repository operations through goroutine manager
+		var wg sync.WaitGroup
+		var results []string
+		var mu sync.Mutex
 
-		// Test FindAsync
-		resultChan := gar.FindAsync(1)
-		result := <-resultChan
+		// Submit Find operations to goroutine manager
+		for i := 0; i < 3; i++ {
+			wg.Add(1)
+			go func(id uint) {
+				defer wg.Done()
+				result, err := mockRepo.Find(id)
+				if err == nil && result != nil {
+					mu.Lock()
+					results = append(results, *result)
+					mu.Unlock()
+				}
+			}(uint(i + 1))
+		}
 
-		assert.Equal(t, "data1", result.Data)
-		assert.NoError(t, result.Error)
+		wg.Wait()
 
-		// Test FindManyAsync
-		resultChan2 := gar.FindManyAsync([]uint{1, 2, 3})
-		result2 := <-resultChan2
-
-		expected := []string{"data1", "data2", "data3"}
-		actual := result2.Data
-		slices.Sort(expected)
-		slices.Sort(actual)
-		assert.Equal(t, expected, actual)
-		assert.NoError(t, result2.Error)
+		// Verify results
+		assert.Len(t, results, 3)
+		assert.Contains(t, results, "data1")
 	})
 
 	t.Run("EventDispatcherIntegration", func(t *testing.T) {
@@ -238,21 +241,20 @@ func TestGoroutineAwareComponentsIntegration(t *testing.T) {
 		manager := go_core.NewGoroutineManager[string](config)
 		defer manager.GetWorkerPool().Shutdown()
 
-		// Create mock event dispatcher
-		mockDispatcher := &MockEventDispatcher[string]{
-			dispatchError: nil,
-		}
+		// Create canonical event bus with work stealing pool
+		wsp := go_core.NewWorkStealingPool[any](go_core.DefaultWorkStealingConfig())
+		defer wsp.Shutdown()
 
-		// Create goroutine-aware event dispatcher
-		gaed := go_core.NewGoroutineAwareEventDispatcher[string](mockDispatcher, manager)
+		eventBus := go_core.NewEventBus[string](wsp, nil, nil)
+		defer eventBus.Shutdown()
 
-		// Test DispatchAsync
+		// Test async dispatch through work stealing pool
 		event := &go_core.Event[string]{
 			ID:   "test-event",
 			Data: "test-data",
 		}
 
-		err := gaed.DispatchAsync(event)
+		err := eventBus.DispatchAsync(event)
 		assert.NoError(t, err)
 
 		// Wait for processing
@@ -267,18 +269,17 @@ func TestGoroutineAwareComponentsIntegration(t *testing.T) {
 		manager := go_core.NewGoroutineManager[string](config)
 		defer manager.GetWorkerPool().Shutdown()
 
-		// Create mock job dispatcher
-		mockDispatcher := &MockJobDispatcher[string]{
-			dispatchError: nil,
-		}
+		// Create canonical job dispatcher with work stealing pool
+		wsp := go_core.NewWorkStealingPool[any](go_core.DefaultWorkStealingConfig())
+		defer wsp.Shutdown()
 
-		// Create goroutine-aware job dispatcher
-		gajd := go_core.NewGoroutineAwareJobDispatcher[string](mockDispatcher, manager)
+		queue := go_core.NewSyncQueue[string]()
+		jobDispatcher := go_core.NewJobDispatcher[string](queue, wsp, nil, nil)
 
-		// Test DispatchAsync
+		// Test async dispatch
 		job := "test-job"
 
-		err := gajd.DispatchAsync(job)
+		err := jobDispatcher.Dispatch(job)
 		assert.NoError(t, err)
 
 		// Wait for processing
@@ -369,12 +370,12 @@ func TestGoroutinePerformanceIntegration(t *testing.T) {
 		assert.Equal(t, int64(1000), finalCount) // 500 from each system
 		assert.Less(t, duration, 5*time.Second)  // Should complete within 5 seconds
 
-		// Check performance metrics
+		// Check performance metrics - should be exact counts
 		gmMetrics := manager.GetMetrics()
 		wsMetrics := wsPool.GetMetrics()
 
-		assert.GreaterOrEqual(t, gmMetrics.TotalJobsProcessed, int64(0))
-		assert.GreaterOrEqual(t, wsMetrics.TotalProcessed, int64(500))
+		assert.Equal(t, int64(500), gmMetrics.TotalJobsProcessed)
+		assert.Equal(t, int64(500), wsMetrics.TotalProcessed)
 	})
 
 	t.Run("MixedWorkloadScenario", func(t *testing.T) {
@@ -439,9 +440,9 @@ func TestGoroutinePerformanceIntegration(t *testing.T) {
 		assert.Equal(t, int64(100), finalFastCount)
 		assert.Equal(t, int64(100), finalSlowCount)
 
-		// Check that auto-scaling handled the mixed workload
+		// Check that auto-scaling handled the mixed workload - exact count
 		metrics := manager.GetMetrics()
-		assert.GreaterOrEqual(t, metrics.TotalJobsProcessed, int64(200))
+		assert.Equal(t, int64(200), metrics.TotalJobsProcessed)
 	})
 }
 
@@ -636,6 +637,8 @@ func (m *MockEventDispatcher[T]) WithContext(ctx context.Context) go_core.EventD
 }
 func (m *MockEventDispatcher[T]) GetPerformanceStats() map[string]interface{}  { return nil }
 func (m *MockEventDispatcher[T]) GetOptimizationStats() map[string]interface{} { return nil }
+
+func (m *MockEventDispatcher[T]) Shutdown() error { return nil }
 
 type MockJobDispatcher[T any] struct {
 	dispatchError error

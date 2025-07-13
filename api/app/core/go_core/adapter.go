@@ -27,7 +27,7 @@ var QueueServiceInstance Queue[any]
 
 // InitializeEventDispatcher initializes the global event dispatcher
 func InitializeEventDispatcher() {
-	// Create basic event dispatcher and store (without optimizations for basic initialization)
+	// Create optimized event dispatcher and store
 	dispatcher := NewEventBus[any](nil, nil, nil)
 	store := NewMemoryEventStore[any]()
 	EventDispatcherServiceInstance = NewEventManager[any](dispatcher, store)
@@ -65,9 +65,9 @@ func init() {
 	// Initialize global instances for Laravel-style compatibility
 	InitializeEventDispatcher()
 
-	// Create basic instances
+	// Create optimized instances
 	JobDispatcherServiceInstance = NewSyncQueue[any]()
-	CacheInstance = NewLocalCache[any]()
+	CacheInstance = NewRedisCache[any](nil)
 	QueueServiceInstance = NewSyncQueue[any]()
 
 	// Register basic message processor

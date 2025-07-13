@@ -301,14 +301,45 @@ func NewGoroutineAwareRepository[T any](repo go_core.Repository[T]) *GoroutineAw
 
 // FindAsync finds a model by ID asynchronously
 func (gar *GoroutineAwareRepository[T]) FindAsync(id uint) <-chan go_core.RepositoryResult[T] {
-	goroutineRepo := go_core.NewGoroutineAwareRepository(gar.repository, gar.manager)
-	return goroutineRepo.FindAsync(id)
+	resultChan := make(chan go_core.RepositoryResult[T], 1)
+
+	go func() {
+		defer close(resultChan)
+		model, err := gar.repository.Find(id)
+		resultChan <- go_core.RepositoryResult[T]{
+			Data:  *model,
+			Error: err,
+		}
+	}()
+
+	return resultChan
 }
 
 // FindManyAsync finds multiple models asynchronously
 func (gar *GoroutineAwareRepository[T]) FindManyAsync(ids []uint) <-chan go_core.RepositoryResult[[]T] {
-	goroutineRepo := go_core.NewGoroutineAwareRepository(gar.repository, gar.manager)
-	return goroutineRepo.FindManyAsync(ids)
+	resultChan := make(chan go_core.RepositoryResult[[]T], 1)
+
+	go func() {
+		defer close(resultChan)
+		var models []T
+		for _, id := range ids {
+			model, err := gar.repository.Find(id)
+			if err != nil {
+				resultChan <- go_core.RepositoryResult[[]T]{
+					Data:  nil,
+					Error: err,
+				}
+				return
+			}
+			models = append(models, *model)
+		}
+		resultChan <- go_core.RepositoryResult[[]T]{
+			Data:  models,
+			Error: nil,
+		}
+	}()
+
+	return resultChan
 }
 
 // CreateAsync creates a model asynchronously
@@ -363,8 +394,7 @@ func NewGoroutineAwareEventDispatcher[T any](dispatcher go_core.EventDispatcher[
 
 // DispatchAsync dispatches an event asynchronously using the worker pool
 func (gaed *GoroutineAwareEventDispatcher[T]) DispatchAsync(event *go_core.Event[T]) error {
-	goroutineDispatcher := go_core.NewGoroutineAwareEventDispatcher(gaed.dispatcher, gaed.manager)
-	return goroutineDispatcher.DispatchAsync(event)
+	return gaed.dispatcher.DispatchAsync(event)
 }
 
 // GoroutineAwareJobDispatcher provides Laravel-style job dispatching with automatic goroutine optimization
@@ -383,6 +413,5 @@ func NewGoroutineAwareJobDispatcher[T any](dispatcher go_core.JobDispatcher[T]) 
 
 // DispatchAsync dispatches a job asynchronously using the worker pool
 func (gajd *GoroutineAwareJobDispatcher[T]) DispatchAsync(job T) error {
-	goroutineDispatcher := go_core.NewGoroutineAwareJobDispatcher(gajd.dispatcher, gajd.manager)
-	return goroutineDispatcher.DispatchAsync(job)
+	return gajd.dispatcher.Dispatch(job)
 }

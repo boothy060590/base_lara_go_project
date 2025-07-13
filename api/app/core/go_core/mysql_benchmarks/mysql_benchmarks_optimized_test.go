@@ -55,10 +55,16 @@ func getWorkStealingConfig() map[string]interface{} {
 
 func setupOptimizedMySQLDB() *gorm.DB {
 	once.Do(func() {
-		mysqlCfg := getMySQLConfig()
+		// Use benchmark-specific database configuration
+		host := getEnv("MYSQL_HOST", "localhost")
+		port := getEnv("MYSQL_PORT", "3309") // Docker exposes MySQL on port 3309
+		user := getEnv("MYSQL_USER", "api_user")
+		password := getEnv("MYSQL_PASSWORD", "b4s3L4r4G0212!")
+		database := getEnv("MYSQL_DATABASE", "benchmark_db")
+
 		// Optimized DSN with connection pooling and performance settings
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&parseTime=True&loc=Local&maxAllowedPacket=0&interpolateParams=true&timeout=30s&readTimeout=30s&writeTimeout=30s&autocommit=%t&sql_mode='%s'",
-			mysqlCfg["username"], mysqlCfg["password"], mysqlCfg["host"], mysqlCfg["port"], mysqlCfg["database"], mysqlCfg["charset"], mysqlCfg["autocommit"], mysqlCfg["sql_mode"])
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&maxAllowedPacket=0&interpolateParams=true&timeout=30s&readTimeout=30s&writeTimeout=30s&autocommit=true&sql_mode='NO_ENGINE_SUBSTITUTION'",
+			user, password, host, port, database)
 
 		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
 			Logger:                 logger.Default.LogMode(logger.Silent), // Disable logging for benchmarks
@@ -69,17 +75,17 @@ func setupOptimizedMySQLDB() *gorm.DB {
 			panic(fmt.Sprintf("failed to connect to MySQL: %v", err))
 		}
 
-		// Configure connection pool
+		// Configure connection pool for benchmarks - tuned for high performance
 		sqlDB, err := db.DB()
 		if err != nil {
 			panic(fmt.Sprintf("failed to get underlying sql.DB: %v", err))
 		}
 
-		// Optimize connection pool for benchmarks - tuned for high performance
-		sqlDB.SetMaxIdleConns(mysqlCfg["max_idle_conns"].(int))
-		sqlDB.SetMaxOpenConns(mysqlCfg["max_open_conns"].(int))
-		sqlDB.SetConnMaxLifetime(time.Duration(mysqlCfg["conn_max_lifetime"].(int)) * time.Second)
-		sqlDB.SetConnMaxIdleTime(time.Duration(mysqlCfg["conn_max_idle_time"].(int)) * time.Second)
+		// Optimize connection pool for benchmarks
+		sqlDB.SetMaxIdleConns(10)
+		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetConnMaxLifetime(3600 * time.Second)
+		sqlDB.SetConnMaxIdleTime(1800 * time.Second)
 
 		// Auto migrate
 		if err := db.AutoMigrate(&TestModelMySQL{}); err != nil {

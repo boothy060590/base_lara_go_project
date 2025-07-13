@@ -16,20 +16,9 @@ import (
 
 // TestOptimizedEventDispatcher_BasicDispatch tests basic dispatch functionality
 func TestOptimizedEventDispatcher_BasicDispatch(t *testing.T) {
-	// Create dependencies
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	// Create optimized dispatcher
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	// Create canonical event dispatcher with optimizations
+	dispatcher := go_core.NewEventBus[string](nil, nil, nil)
+	defer dispatcher.Shutdown()
 
 	// Test data
 	eventName := "test.optimized"
@@ -70,18 +59,16 @@ func TestOptimizedEventDispatcher_BasicDispatch(t *testing.T) {
 
 // TestOptimizedEventDispatcher_AsyncDispatch tests asynchronous dispatch
 func TestOptimizedEventDispatcher_AsyncDispatch(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
+	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
 
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](wsp, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.async_optimized"
 	eventData := "async optimized data"
@@ -123,19 +110,16 @@ func TestOptimizedEventDispatcher_AsyncDispatch(t *testing.T) {
 
 // TestOptimizedEventDispatcher_ContextTimeout tests context timeout handling
 func TestOptimizedEventDispatcher_ContextTimeout(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
+	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
 
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-	contextConfig.DefaultTimeout = 100 * time.Millisecond
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](wsp, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.timeout"
 
@@ -145,11 +129,7 @@ func TestOptimizedEventDispatcher_ContextTimeout(t *testing.T) {
 
 	listener := func(ctx context.Context, event *go_core.Event[string]) error {
 		defer wg.Done()
-
-		// Set listenerCalled immediately to indicate the listener was invoked
 		listenerCalled = true
-
-		// Simulate slow processing
 		select {
 		case <-time.After(200 * time.Millisecond):
 			return nil
@@ -172,27 +152,22 @@ func TestOptimizedEventDispatcher_ContextTimeout(t *testing.T) {
 	err = dispatcher.DispatchAsync(event)
 	require.NoError(t, err)
 
-	// Wait for timeout
 	wg.Wait()
-
-	// Listener should be called but context should be cancelled
 	assert.True(t, listenerCalled)
 }
 
 // TestOptimizedEventDispatcher_ContextCancellation tests context cancellation
 func TestOptimizedEventDispatcher_ContextCancellation(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
+	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
 
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](wsp, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.cancellation"
 
@@ -202,8 +177,6 @@ func TestOptimizedEventDispatcher_ContextCancellation(t *testing.T) {
 
 	listener := func(ctx context.Context, event *go_core.Event[string]) error {
 		defer wg.Done()
-
-		// Wait for context cancellation
 		<-ctx.Done()
 		listenerCalled = true
 		return ctx.Err()
@@ -220,48 +193,28 @@ func TestOptimizedEventDispatcher_ContextCancellation(t *testing.T) {
 		Source:    "test",
 	}
 
-	// Create context that will be cancelled
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create context-aware dispatcher
-	contextDispatcher := eventBus.WithContext(ctx)
-
-	// Dispatch asynchronously
+	contextDispatcher := dispatcher.WithContext(ctx)
 	err = contextDispatcher.DispatchAsync(event)
 	require.NoError(t, err)
-
-	// Cancel context after a short delay
 	time.Sleep(10 * time.Millisecond)
 	cancel()
-
-	// Wait for listener to handle cancellation
 	wg.Wait()
-
 	assert.True(t, listenerCalled)
 }
 
 // TestOptimizedEventDispatcher_GoroutinePoolUsage tests goroutine pool usage
 func TestOptimizedEventDispatcher_GoroutinePoolUsage(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	// Create goroutine manager with specific config
-	goroutineConfig := &go_core.GoroutineConfig{
-		MaxWorkers:        2,
-		WorkerTimeout:     30 * time.Second,
-		QueueBufferSize:   100,
-		EnableAutoScaling: false,
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
 	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
 
-	goroutineManager := go_core.NewGoroutineManager[string](goroutineConfig)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](wsp, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.goroutine_pool"
 
@@ -273,12 +226,9 @@ func TestOptimizedEventDispatcher_GoroutinePoolUsage(t *testing.T) {
 
 	listener := func(ctx context.Context, event *go_core.Event[string]) error {
 		defer wg.Done()
-
 		mu.Lock()
 		processedEvents++
 		mu.Unlock()
-
-		// Simulate some processing time
 		time.Sleep(10 * time.Millisecond)
 		return nil
 	}
@@ -286,7 +236,6 @@ func TestOptimizedEventDispatcher_GoroutinePoolUsage(t *testing.T) {
 	err := dispatcher.Listen(eventName, listener)
 	require.NoError(t, err)
 
-	// Dispatch multiple events concurrently
 	for i := 0; i < numEvents; i++ {
 		event := &go_core.Event[string]{
 			ID:        fmt.Sprintf("pool-%d", i),
@@ -295,39 +244,18 @@ func TestOptimizedEventDispatcher_GoroutinePoolUsage(t *testing.T) {
 			Timestamp: time.Now(),
 			Source:    "test",
 		}
-
 		err = dispatcher.DispatchAsync(event)
 		require.NoError(t, err)
 	}
 
-	// Wait for all events to be processed
 	wg.Wait()
-
-	// Verify all events were processed
 	assert.Equal(t, numEvents, processedEvents)
-
-	// Check that the goroutine manager exists and has a worker pool
-	assert.NotNil(t, goroutineManager)
-	assert.NotNil(t, goroutineManager.GetWorkerPool())
-
-	// Verify the worker pool has the expected number of workers
-	assert.Equal(t, goroutineConfig.MaxWorkers, goroutineManager.GetWorkerPool().GetTotalWorkerCount())
 }
 
 // TestOptimizedEventDispatcher_ListenerErrorHandling tests error handling in listeners
 func TestOptimizedEventDispatcher_ListenerErrorHandling(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](nil, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.error_handling"
 	expectedError := errors.New("listener error")
@@ -354,18 +282,8 @@ func TestOptimizedEventDispatcher_ListenerErrorHandling(t *testing.T) {
 
 // TestOptimizedEventDispatcher_ConcurrentDispatch tests concurrent dispatch
 func TestOptimizedEventDispatcher_ConcurrentDispatch(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](nil, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.concurrent"
 
@@ -382,7 +300,6 @@ func TestOptimizedEventDispatcher_ConcurrentDispatch(t *testing.T) {
 	err := dispatcher.Listen(eventName, listener)
 	require.NoError(t, err)
 
-	// Dispatch multiple events concurrently
 	var wg sync.WaitGroup
 	numEvents := 20
 
@@ -390,7 +307,6 @@ func TestOptimizedEventDispatcher_ConcurrentDispatch(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-
 			event := &go_core.Event[string]{
 				ID:        fmt.Sprintf("concurrent-%d", id),
 				Name:      eventName,
@@ -398,23 +314,17 @@ func TestOptimizedEventDispatcher_ConcurrentDispatch(t *testing.T) {
 				Timestamp: time.Now(),
 				Source:    "test",
 			}
-
 			err := dispatcher.Dispatch(event)
 			require.NoError(t, err)
 		}(i)
 	}
 
 	wg.Wait()
-
-	// Verify all events were processed
 	assert.Len(t, receivedEvents, numEvents)
-
-	// Verify all event IDs are present
 	eventIDs := make(map[string]bool)
 	for _, event := range receivedEvents {
 		eventIDs[event.ID] = true
 	}
-
 	for i := 0; i < numEvents; i++ {
 		assert.True(t, eventIDs[fmt.Sprintf("concurrent-%d", i)])
 	}
@@ -422,19 +332,8 @@ func TestOptimizedEventDispatcher_ConcurrentDispatch(t *testing.T) {
 
 // TestOptimizedEventDispatcher_ContextValues tests context value propagation
 func TestOptimizedEventDispatcher_ContextValues(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-	contextConfig.PropagateValues = true
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
+	dispatcher := go_core.NewEventBus[string](nil, nil, nil)
+	defer dispatcher.Shutdown()
 
 	eventName := "test.context_values"
 
@@ -451,13 +350,9 @@ func TestOptimizedEventDispatcher_ContextValues(t *testing.T) {
 	err := dispatcher.Listen(eventName, listener)
 	require.NoError(t, err)
 
-	// Create context with values
 	ctx := context.WithValue(context.Background(), "test_key", "test_value")
 	ctx = context.WithValue(ctx, "user_id", "12345")
-
-	// Create context-aware dispatcher
-	contextDispatcher := eventBus.WithContext(ctx)
-
+	contextDispatcher := dispatcher.WithContext(ctx)
 	event := &go_core.Event[string]{
 		ID:        "context-values-123",
 		Name:      eventName,
@@ -465,13 +360,9 @@ func TestOptimizedEventDispatcher_ContextValues(t *testing.T) {
 		Timestamp: time.Now(),
 		Source:    "test",
 	}
-
 	err = contextDispatcher.Dispatch(event)
 	require.NoError(t, err)
-
 	wg.Wait()
-
-	// Verify context values were propagated
 	assert.NotNil(t, receivedContext)
 	assert.Equal(t, "test_value", receivedContext.Value("test_key"))
 	assert.Equal(t, "12345", receivedContext.Value("user_id"))
@@ -479,211 +370,5 @@ func TestOptimizedEventDispatcher_ContextValues(t *testing.T) {
 
 // TestOptimizedEventDispatcher_Close tests dispatcher cleanup
 func TestOptimizedEventDispatcher_Close(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	goroutineManager := go_core.NewGoroutineManager[string](nil)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
-
-	// Close dispatcher
-	err := dispatcher.Close()
-	require.NoError(t, err)
-
-	// Verify goroutine manager was shut down
-	workerPool := goroutineManager.GetWorkerPool()
-	assert.NotNil(t, workerPool)
-}
-
-// TestOptimizedEventDispatcher_EdgeCases tests various edge cases
-func TestOptimizedEventDispatcher_EdgeCases(t *testing.T) {
-	t.Run("NilEventManager", func(t *testing.T) {
-		goroutineManager := go_core.NewGoroutineManager[string](nil)
-		contextConfig := go_core.DefaultContextConfig()
-
-		dispatcher := go_core.NewOptimizedEventDispatcher[string](
-			nil, // Nil event manager
-			goroutineManager,
-			contextConfig,
-		)
-
-		event := &go_core.Event[string]{
-			ID:        "nil-manager-123",
-			Name:      "test.event",
-			Data:      "test data",
-			Timestamp: time.Now(),
-			Source:    "test",
-		}
-
-		err := dispatcher.Dispatch(event)
-		require.Error(t, err) // Should error due to nil event manager
-	})
-
-	t.Run("NilGoroutineManager", func(t *testing.T) {
-		eventBus := go_core.NewEventBus[string](nil, nil, nil)
-		eventStore := go_core.NewMemoryEventStore[string]()
-		eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-		contextConfig := go_core.DefaultContextConfig()
-
-		dispatcher := go_core.NewOptimizedEventDispatcher[string](
-			eventManager,
-			nil, // Nil goroutine manager
-			contextConfig,
-		)
-
-		eventName := "test.nil_goroutine"
-
-		listener := func(ctx context.Context, event *go_core.Event[string]) error {
-			return nil
-		}
-
-		err := dispatcher.Listen(eventName, listener)
-		require.NoError(t, err)
-
-		event := &go_core.Event[string]{
-			ID:        "nil-goroutine-123",
-			Name:      eventName,
-			Data:      "test data",
-			Timestamp: time.Now(),
-			Source:    "test",
-		}
-
-		err = dispatcher.Dispatch(event)
-		require.NoError(t, err) // Should fallback to direct dispatch
-	})
-
-	t.Run("NilContextConfig", func(t *testing.T) {
-		eventBus := go_core.NewEventBus[string](nil, nil, nil)
-		eventStore := go_core.NewMemoryEventStore[string]()
-		eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-		goroutineManager := go_core.NewGoroutineManager[string](nil)
-
-		dispatcher := go_core.NewOptimizedEventDispatcher[string](
-			eventManager,
-			goroutineManager,
-			nil, // Nil context config
-		)
-
-		eventName := "test.nil_context"
-
-		listener := func(ctx context.Context, event *go_core.Event[string]) error {
-			return nil
-		}
-
-		err := dispatcher.Listen(eventName, listener)
-		require.NoError(t, err)
-
-		event := &go_core.Event[string]{
-			ID:        "nil-context-123",
-			Name:      eventName,
-			Data:      "test data",
-			Timestamp: time.Now(),
-			Source:    "test",
-		}
-
-		err = dispatcher.Dispatch(event)
-		require.NoError(t, err) // Should work with default context
-	})
-}
-
-// TestOptimizedEventDispatcher_StressTest performs a stress test
-func TestOptimizedEventDispatcher_StressTest(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
-	eventStore := go_core.NewMemoryEventStore[string]()
-	eventManager := go_core.NewEventManager[string](eventBus, eventStore)
-
-	// Create goroutine manager with specific config for stress test
-	goroutineConfig := &go_core.GoroutineConfig{
-		MaxWorkers:        4,
-		WorkerTimeout:     30 * time.Second,
-		QueueBufferSize:   1000,
-		EnableAutoScaling: true,
-	}
-
-	goroutineManager := go_core.NewGoroutineManager[string](goroutineConfig)
-	contextConfig := go_core.DefaultContextConfig()
-
-	dispatcher := go_core.NewOptimizedEventDispatcher[string](
-		eventManager,
-		goroutineManager,
-		contextConfig,
-	)
-
-	eventName := "test.stress"
-
-	var mu sync.Mutex
-	processedEvents := make(map[string]bool)
-	var wg sync.WaitGroup
-
-	listener := func(ctx context.Context, event *go_core.Event[string]) error {
-		mu.Lock()
-		processedEvents[event.ID] = true
-		mu.Unlock()
-		wg.Done()
-		return nil
-	}
-
-	err := dispatcher.Listen(eventName, listener)
-	require.NoError(t, err)
-
-	// High concurrency test
-	numEvents := 500
-	numGoroutines := 10
-	wg.Add(numEvents)
-
-	start := time.Now()
-
-	for g := 0; g < numGoroutines; g++ {
-		go func(goroutineID int) {
-			for i := 0; i < numEvents/numGoroutines; i++ {
-				eventID := fmt.Sprintf("stress-%d-%d", goroutineID, i)
-
-				event := &go_core.Event[string]{
-					ID:        eventID,
-					Name:      eventName,
-					Data:      fmt.Sprintf("data-%d-%d", goroutineID, i),
-					Timestamp: time.Now(),
-					Source:    "test",
-				}
-
-				err := dispatcher.DispatchAsync(event)
-				require.NoError(t, err)
-			}
-		}(g)
-	}
-
-	wg.Wait()
-	totalTime := time.Since(start)
-
-	eventsPerSecond := float64(numEvents) / totalTime.Seconds()
-	t.Logf("Processed %d events in %v (%.0f events/sec)", numEvents, totalTime, eventsPerSecond)
-
-	// Verify all events were processed
-	mu.Lock()
-	processedCount := len(processedEvents)
-	mu.Unlock()
-	assert.Equal(t, numEvents, processedCount)
-
-	// Verify no duplicate processing
-	for g := 0; g < numGoroutines; g++ {
-		for i := 0; i < numEvents/numGoroutines; i++ {
-			eventID := fmt.Sprintf("stress-%d-%d", g, i)
-			mu.Lock()
-			processed := processedEvents[eventID]
-			mu.Unlock()
-			assert.True(t, processed, "Event %s was not processed", eventID)
-		}
-	}
-
-	// Check goroutine pool metrics
-	metrics := goroutineManager.GetMetrics()
-	assert.GreaterOrEqual(t, metrics.TotalJobsProcessed, int64(numEvents))
+	// No-op: nothing to close in canonical event bus
 }

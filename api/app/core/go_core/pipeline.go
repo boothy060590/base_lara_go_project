@@ -55,6 +55,11 @@ func (p *LaravelPipeline[T]) process(ctx context.Context, data T, stages []Larav
 	}
 
 	stage := stages[index]
+	// Handle nil stages gracefully
+	if stage == nil {
+		return p.process(ctx, data, stages, index+1)
+	}
+
 	return stage.Handle(ctx, data, func(data T) error {
 		return p.process(ctx, data, stages, index+1)
 	})
@@ -110,8 +115,8 @@ func WithCache[T any](cache Cache[T], key string, ttl time.Duration) LaravelPipe
 	return LaravelPipelineStageFunc[T](func(ctx context.Context, data T, next func(T) error) error {
 		// Try to get from cache first
 		if cached, err := cache.Get(key); err == nil && cached != nil {
-			// Return cached data without calling next
-			return nil
+			// Cache hit - still call next but with original data
+			return next(data)
 		}
 
 		// Not in cache, process normally

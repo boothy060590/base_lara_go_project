@@ -148,8 +148,8 @@ func (wsp *WorkStealingPool[T]) Submit(item WorkItem[T]) error {
 		return nil
 	}
 
-	// Fall back to global queue
-	return wsp.globalQueue.Push(item)
+	// Fall back to global queue with blocking/retry logic
+	return wsp.globalQueue.PushWithContext(wsp.ctx, item)
 }
 
 // SubmitAsync submits a work item asynchronously
@@ -359,6 +359,38 @@ func (wq *WorkQueue[T]) Push(item WorkItem[T]) error {
 	wq.tail = (wq.tail + 1) % wq.size
 	wq.notEmpty.Signal()
 	return nil
+}
+
+// PushWithContext adds an item to the queue with context-aware blocking/retry logic
+func (wq *WorkQueue[T]) PushWithContext(ctx context.Context, item WorkItem[T]) error {
+	// Check context cancellation first
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Try immediate push first
+	if err := wq.Push(item); err == nil {
+		return nil
+	}
+
+	// If queue is full, use blocking logic with context
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Try to push again
+			if err := wq.Push(item); err == nil {
+				return nil
+			} else if err.Error() == "queue is shutdown" {
+				return err
+			}
+			// Queue is full, wait a bit and retry
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 }
 
 // TryPush attempts to add an item to the queue without blocking

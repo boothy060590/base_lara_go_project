@@ -25,7 +25,7 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 
 		// Create goroutine-aware dispatcher
 		goroutineManager := app_core.NewGoroutineManager[any](nil)
-		return app_core.NewGoroutineAwareEventDispatcher[any](eventBus, goroutineManager), nil
+		return app_core.NewEventBusWithConfig[any](nil, nil, nil, nil), nil
 	})
 
 	// Register goroutine-aware job dispatcher

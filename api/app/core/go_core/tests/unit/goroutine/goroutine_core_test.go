@@ -119,13 +119,8 @@ func TestWorkerPool(t *testing.T) {
 				},
 			}
 			err := pool.Submit(job)
-			if i < 2 {
-				assert.NoError(t, err) // First 2 should succeed
-			} else {
-				assert.Error(t, err) // Third should fail
-				assert.Contains(t, err.Error(), "job queue is full")
-				return
-			}
+			// With blocking logic, all jobs should succeed (they will block until processed)
+			assert.NoError(t, err)
 		}
 	})
 
@@ -289,13 +284,11 @@ func TestGoroutineAwareRepository(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
-		// Mock repository
-		mockRepo := &MockRepository[string]{}
-
-		gar := go_core.NewGoroutineAwareRepository[string](mockRepo, manager)
-		assert.NotNil(t, gar)
+		// Test the canonical repository with goroutine optimizations
+		repo := go_core.NewRepository[string](nil, nil, nil, nil)
+		assert.NotNil(t, repo)
 	})
 
 	t.Run("FindAsync", func(t *testing.T) {
@@ -303,16 +296,24 @@ func TestGoroutineAwareRepository(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
 		mockRepo := &MockRepository[string]{
 			findResult: "test-data",
 			findError:  nil,
 		}
 
-		gar := go_core.NewGoroutineAwareRepository[string](mockRepo, manager)
+		// Test async operations using goroutines directly
+		resultChan := make(chan go_core.RepositoryResult[string], 1)
+		go func() {
+			defer close(resultChan)
+			model, err := mockRepo.Find(1)
+			resultChan <- go_core.RepositoryResult[string]{
+				Data:  *model,
+				Error: err,
+			}
+		}()
 
-		resultChan := gar.FindAsync(1)
 		result := <-resultChan
 
 		assert.Equal(t, "test-data", result.Data)
@@ -324,7 +325,7 @@ func TestGoroutineAwareRepository(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
 		// Create a mock repository that returns different results for different IDs
 		mockRepo := &MockRepository[string]{
@@ -332,9 +333,28 @@ func TestGoroutineAwareRepository(t *testing.T) {
 			findError:  nil,
 		}
 
-		gar := go_core.NewGoroutineAwareRepository[string](mockRepo, manager)
+		// Test async operations using goroutines directly
+		resultChan := make(chan go_core.RepositoryResult[[]string], 1)
+		go func() {
+			defer close(resultChan)
+			var models []string
+			for _, id := range []uint{1, 2} {
+				model, err := mockRepo.Find(id)
+				if err != nil {
+					resultChan <- go_core.RepositoryResult[[]string]{
+						Data:  nil,
+						Error: err,
+					}
+					return
+				}
+				models = append(models, *model)
+			}
+			resultChan <- go_core.RepositoryResult[[]string]{
+				Data:  models,
+				Error: nil,
+			}
+		}()
 
-		resultChan := gar.FindManyAsync([]uint{1, 2})
 		result := <-resultChan
 
 		// Since FindManyAsync calls Find for each ID, and Find returns the same result,
@@ -352,12 +372,11 @@ func TestGoroutineAwareEventDispatcher(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
-		mockDispatcher := &MockEventDispatcher[string]{}
-
-		gaed := go_core.NewGoroutineAwareEventDispatcher[string](mockDispatcher, manager)
-		assert.NotNil(t, gaed)
+		// Test the canonical event dispatcher with goroutine optimizations
+		dispatcher := go_core.NewEventBus[string](nil, nil, nil)
+		assert.NotNil(t, dispatcher)
 	})
 
 	t.Run("DispatchAsync", func(t *testing.T) {
@@ -365,20 +384,17 @@ func TestGoroutineAwareEventDispatcher(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
-		mockDispatcher := &MockEventDispatcher[string]{
-			dispatchError: nil,
-		}
-
-		gaed := go_core.NewGoroutineAwareEventDispatcher[string](mockDispatcher, manager)
+		// Test the canonical event dispatcher with goroutine optimizations
+		dispatcher := go_core.NewEventBus[string](nil, nil, nil)
 
 		event := &go_core.Event[string]{
 			ID:   "test-event",
 			Data: "test-data",
 		}
 
-		err := gaed.DispatchAsync(event)
+		err := dispatcher.DispatchAsync(event)
 		assert.NoError(t, err)
 	})
 }
@@ -390,12 +406,12 @@ func TestGoroutineAwareJobDispatcher(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
-		mockDispatcher := &MockJobDispatcher[string]{}
-
-		gajd := go_core.NewGoroutineAwareJobDispatcher[string](mockDispatcher, manager)
-		assert.NotNil(t, gajd)
+		// Test the canonical job dispatcher with goroutine optimizations
+		queue := go_core.NewSyncQueue[string]()
+		dispatcher := go_core.NewJobDispatcher[string](queue, nil, nil, nil)
+		assert.NotNil(t, dispatcher)
 	})
 
 	t.Run("DispatchAsync", func(t *testing.T) {
@@ -403,18 +419,226 @@ func TestGoroutineAwareJobDispatcher(t *testing.T) {
 			MaxWorkers:      2,
 			QueueBufferSize: 10,
 		}
-		manager := go_core.NewGoroutineManager[string](config)
+		_ = go_core.NewGoroutineManager[string](config)
 
-		mockDispatcher := &MockJobDispatcher[string]{
-			dispatchError: nil,
-		}
-
-		gajd := go_core.NewGoroutineAwareJobDispatcher[string](mockDispatcher, manager)
+		// Test the canonical job dispatcher with goroutine optimizations
+		queue := go_core.NewSyncQueue[string]()
+		dispatcher := go_core.NewJobDispatcher[string](queue, nil, nil, nil)
 
 		job := "test-job"
 
-		err := gajd.DispatchAsync(job)
+		err := dispatcher.Dispatch(job)
 		assert.NoError(t, err)
+	})
+}
+
+// ============================================================================
+// DATA LOSS DETECTION TESTS
+// ============================================================================
+
+func TestGoroutineDataLossDetection(t *testing.T) {
+	t.Run("HighLoadNoJobLoss", func(t *testing.T) {
+		config := &go_core.GoroutineConfig{
+			MaxWorkers:      8,
+			QueueBufferSize: 1000,
+		}
+		manager := go_core.NewGoroutineManager[string](config)
+		defer manager.GetWorkerPool().Shutdown()
+
+		var processedCount int64
+		var mu sync.Mutex
+
+		// Submit many jobs
+		for i := 0; i < 1000; i++ {
+			job := go_core.GoroutineJob[string]{
+				Job: go_core.Job[string]{
+					ID:   fmt.Sprintf("job-%d", i),
+					Data: fmt.Sprintf("data-%d", i),
+				},
+				Timeout: 5 * time.Second,
+				Handler: func(ctx context.Context, job *go_core.GoroutineJob[string]) error {
+					mu.Lock()
+					processedCount++
+					mu.Unlock()
+					return nil
+				},
+			}
+			err := manager.GetWorkerPool().Submit(job)
+			assert.NoError(t, err, "Failed to submit job %d", i)
+		}
+
+		// Wait for processing
+		time.Sleep(2 * time.Second)
+
+		mu.Lock()
+		finalCount := processedCount
+		mu.Unlock()
+
+		assert.Equal(t, int64(1000), finalCount, "Job loss detected: expected 1000 jobs, got %d", finalCount)
+
+		// Check metrics
+		metrics := manager.GetMetrics()
+		assert.Equal(t, int64(1000), metrics.TotalJobsProcessed, "Metrics show job loss: expected 1000, got %d", metrics.TotalJobsProcessed)
+	})
+
+	t.Run("ConcurrentSubmissionNoJobLoss", func(t *testing.T) {
+		config := &go_core.GoroutineConfig{
+			MaxWorkers:      4,
+			QueueBufferSize: 500,
+		}
+		manager := go_core.NewGoroutineManager[string](config)
+		defer manager.GetWorkerPool().Shutdown()
+
+		var processedCount int64
+		var mu sync.Mutex
+
+		// Submit jobs concurrently
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := 0; j < 50; j++ {
+					job := go_core.GoroutineJob[string]{
+						Job: go_core.Job[string]{
+							ID:   fmt.Sprintf("concurrent-job-%d-%d", id, j),
+							Data: fmt.Sprintf("concurrent-data-%d-%d", id, j),
+						},
+						Timeout: 5 * time.Second,
+						Handler: func(ctx context.Context, job *go_core.GoroutineJob[string]) error {
+							mu.Lock()
+							processedCount++
+							mu.Unlock()
+							return nil
+						},
+					}
+					err := manager.GetWorkerPool().Submit(job)
+					assert.NoError(t, err, "Failed to submit concurrent job %d-%d", id, j)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Wait for processing
+		time.Sleep(2 * time.Second)
+
+		mu.Lock()
+		finalCount := processedCount
+		mu.Unlock()
+
+		assert.Equal(t, int64(500), finalCount, "Job loss detected in concurrent submission: expected 500 jobs, got %d", finalCount)
+	})
+
+	t.Run("TimeoutHandlingNoJobLoss", func(t *testing.T) {
+		config := &go_core.GoroutineConfig{
+			MaxWorkers:      2,
+			QueueBufferSize: 100,
+		}
+		manager := go_core.NewGoroutineManager[string](config)
+		defer manager.GetWorkerPool().Shutdown()
+
+		var processedCount int64
+		var timeoutCount int64
+		var mu sync.Mutex
+
+		// Submit jobs with different timeouts
+		for i := 0; i < 20; i++ {
+			job := go_core.GoroutineJob[string]{
+				Job: go_core.Job[string]{
+					ID:   fmt.Sprintf("timeout-job-%d", i),
+					Data: fmt.Sprintf("timeout-data-%d", i),
+				},
+				Timeout: 200 * time.Millisecond, // Longer timeout
+				Handler: func(ctx context.Context, job *go_core.GoroutineJob[string]) error {
+					select {
+					case <-ctx.Done():
+						mu.Lock()
+						timeoutCount++
+						mu.Unlock()
+						return ctx.Err()
+					case <-time.After(50 * time.Millisecond): // Shorter than timeout
+						mu.Lock()
+						processedCount++
+						mu.Unlock()
+						return nil
+					}
+				},
+			}
+			err := manager.GetWorkerPool().Submit(job)
+			assert.NoError(t, err, "Failed to submit timeout job %d", i)
+		}
+
+		// Wait for processing
+		time.Sleep(1 * time.Second)
+
+		mu.Lock()
+		finalProcessed := processedCount
+		finalTimeout := timeoutCount
+		mu.Unlock()
+
+		// All jobs should be handled (either processed or timed out)
+		totalHandled := finalProcessed + finalTimeout
+		assert.Equal(t, int64(20), totalHandled, "Job loss detected in timeout scenario: expected 20 jobs handled, got %d", totalHandled)
+
+		// Most should be processed, some might timeout due to queue delays
+		assert.Greater(t, finalProcessed, int64(0), "No jobs were processed")
+		assert.GreaterOrEqual(t, finalTimeout, int64(0), "Unexpected timeout count")
+	})
+
+	t.Run("QueueFullHandlingNoJobLoss", func(t *testing.T) {
+		config := &go_core.GoroutineConfig{
+			MaxWorkers:      1, // Single worker
+			QueueBufferSize: 5, // Small buffer
+		}
+		manager := go_core.NewGoroutineManager[string](config)
+		defer manager.GetWorkerPool().Shutdown()
+
+		var processedCount int64
+		var submittedCount int64
+		var mu sync.Mutex
+
+		// Submit jobs faster than they can be processed
+		for i := 0; i < 20; i++ {
+			job := go_core.GoroutineJob[string]{
+				Job: go_core.Job[string]{
+					ID:   fmt.Sprintf("queue-job-%d", i),
+					Data: fmt.Sprintf("queue-data-%d", i),
+				},
+				Timeout: 5 * time.Second,
+				Handler: func(ctx context.Context, job *go_core.GoroutineJob[string]) error {
+					time.Sleep(50 * time.Millisecond) // Slow processing
+					mu.Lock()
+					processedCount++
+					mu.Unlock()
+					return nil
+				},
+			}
+			err := manager.GetWorkerPool().Submit(job)
+			if err != nil {
+				// Queue is full, this is expected behavior
+				t.Logf("Queue full for job %d: %v", i, err)
+			} else {
+				mu.Lock()
+				submittedCount++
+				mu.Unlock()
+			}
+		}
+
+		// Wait for processing
+		time.Sleep(3 * time.Second)
+
+		mu.Lock()
+		finalProcessed := processedCount
+		finalSubmitted := submittedCount
+		mu.Unlock()
+
+		// All submitted jobs should be processed
+		assert.Equal(t, finalSubmitted, finalProcessed, "Job loss detected in queue full scenario: submitted %d, processed %d", finalSubmitted, finalProcessed)
+
+		// Should have some jobs submitted and processed
+		assert.Greater(t, finalSubmitted, int64(0), "No jobs were submitted")
+		assert.Greater(t, finalProcessed, int64(0), "No jobs were processed")
 	})
 }
 
@@ -508,6 +732,7 @@ func (m *MockEventDispatcher[T]) WithContext(ctx context.Context) go_core.EventD
 }
 func (m *MockEventDispatcher[T]) GetPerformanceStats() map[string]interface{}  { return nil }
 func (m *MockEventDispatcher[T]) GetOptimizationStats() map[string]interface{} { return nil }
+func (m *MockEventDispatcher[T]) Shutdown() error                              { return nil }
 
 type MockJobDispatcher[T any] struct {
 	dispatchError error

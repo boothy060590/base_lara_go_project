@@ -29,6 +29,11 @@ func (p *OptimizationServiceProvider) Register(container *app_core.Container) er
 		return err
 	}
 
+	// Register infrastructure optimizations
+	if err := p.registerInfrastructureOptimizations(container); err != nil {
+		return err
+	}
+
 	// Register optimization facade
 	if err := p.registerOptimizationFacade(container); err != nil {
 		return err
@@ -55,6 +60,7 @@ func (p *OptimizationServiceProvider) Provides() []string {
 		"optimization.work_stealing",
 		"optimization.profile_guided",
 		"optimization.custom_allocator",
+		"optimization.infrastructure",
 		"optimization.facade",
 	}
 }
@@ -176,6 +182,36 @@ func (p *OptimizationServiceProvider) registerCustomAllocators(container *app_co
 
 	container.Singleton("optimization.custom_allocator.event", func() (any, error) {
 		return app_core.NewCustomAllocator[any](config), nil
+	})
+
+	return nil
+}
+
+// registerInfrastructureOptimizations registers infrastructure optimizations
+func (p *OptimizationServiceProvider) registerInfrastructureOptimizations(container *app_core.Container) error {
+	infrastructureConfig := config.Get("infrastructure_optimizations").(map[string]interface{})
+
+	// Register infrastructure-optimized event dispatcher
+	container.Singleton("optimization.infrastructure.event_dispatcher", func() (any, error) {
+		return app_core.NewEventBusWithConfig[any](infrastructureConfig, nil, nil, nil), nil
+	})
+
+	// Register context decorator
+	container.Singleton("optimization.infrastructure.context_decorator", func() (any, error) {
+		return app_core.NewContextDecorator(infrastructureConfig), nil
+	})
+
+	// Register typed versions for common types
+	container.Singleton("optimization.infrastructure.event_dispatcher.user", func() (any, error) {
+		return app_core.NewEventBusWithConfig[any](infrastructureConfig, nil, nil, nil), nil
+	})
+
+	container.Singleton("optimization.infrastructure.event_dispatcher.job", func() (any, error) {
+		return app_core.NewEventBusWithConfig[any](infrastructureConfig, nil, nil, nil), nil
+	})
+
+	container.Singleton("optimization.infrastructure.event_dispatcher.event", func() (any, error) {
+		return app_core.NewEventBusWithConfig[any](infrastructureConfig, nil, nil, nil), nil
 	})
 
 	return nil
@@ -345,6 +381,24 @@ func (of *OptimizationFacade) CustomAllocator() *app_core.CustomAllocator[any] {
 		return nil
 	}
 	return instance.(*app_core.CustomAllocator[any])
+}
+
+// InfrastructureOptimizations returns the infrastructure-optimized event dispatcher
+func (of *OptimizationFacade) InfrastructureOptimizations() app_core.EventDispatcher[any] {
+	instance, err := of.container.Resolve("optimization.infrastructure.event_dispatcher")
+	if err != nil {
+		return nil
+	}
+	return instance.(app_core.EventDispatcher[any])
+}
+
+// ContextDecorator returns the context decorator
+func (of *OptimizationFacade) ContextDecorator() *app_core.ContextDecorator {
+	instance, err := of.container.Resolve("optimization.infrastructure.context_decorator")
+	if err != nil {
+		return nil
+	}
+	return instance.(*app_core.ContextDecorator)
 }
 
 // Integration types for automatic optimization

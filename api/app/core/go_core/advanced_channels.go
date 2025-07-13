@@ -24,11 +24,11 @@ type ChannelConfig struct {
 func DefaultChannelConfig() *ChannelConfig {
 	return &ChannelConfig{
 		BufferSize:    1000,
-		Timeout:       30 * time.Second,
+		Timeout:       5 * time.Second, // Shorter timeout for operations
 		MaxWorkers:    10,
 		EnableBackoff: true,
-		BackoffDelay:  100 * time.Millisecond,
-		MaxRetries:    3,
+		BackoffDelay:  10 * time.Millisecond, // Shorter backoff for retries
+		MaxRetries:    5,                     // More retries with shorter delays
 	}
 }
 
@@ -71,16 +71,56 @@ func FanOut[T any](cm *ChannelManager, input <-chan T, outputs int) []<-chan T {
 			}
 		}()
 
+		index := 0
 		for item := range input {
-			// Round-robin distribution
-			for _, ch := range outputChannels {
+			// Round-robin distribution with blocking/retry logic
+			sent := false
+			attempts := 0
+			maxAttempts := outputs * cm.config.MaxRetries // Try each channel up to MaxRetries times
+
+			for !sent && attempts < maxAttempts {
+				ch := outputChannels[index%outputs]
+
+				// Try non-blocking send first
 				select {
 				case ch <- item:
 					// Item sent successfully
-				case <-time.After(cm.config.Timeout):
-					// Timeout - skip this channel
+					sent = true
+				default:
+					// Channel is full, try next channel
+					index++
+					attempts++
+
+					// Small delay to prevent busy waiting
+					if attempts < maxAttempts {
+						time.Sleep(cm.config.BackoffDelay)
+					}
 				}
 			}
+
+			if !sent {
+				// If all channels are full, use blocking send with retry logic
+				ch := outputChannels[index%outputs]
+				retryCount := 0
+				for !sent && retryCount < cm.config.MaxRetries {
+					select {
+					case ch <- item:
+						sent = true
+					case <-time.After(cm.config.Timeout):
+						// Timeout reached, try next channel
+						index++
+						retryCount++
+						ch = outputChannels[index%outputs]
+					}
+				}
+
+				if !sent {
+					// Final attempt - use blocking send without timeout
+					ch <- item
+				}
+			}
+
+			index++
 		}
 	}()
 
@@ -106,11 +146,31 @@ func FanIn[T any](cm *ChannelManager, inputs []<-chan T) <-chan T {
 			go func(ch <-chan T) {
 				defer wg.Done()
 				for item := range ch {
-					select {
-					case output <- item:
-						// Item sent successfully
-					case <-time.After(cm.config.Timeout):
-						// Timeout - skip this item
+					// Use blocking/retry logic to prevent data loss
+					sent := false
+					retryCount := 0
+
+					for !sent && retryCount < cm.config.MaxRetries {
+						// Try non-blocking send first
+						select {
+						case output <- item:
+							sent = true
+						default:
+							// Channel is full, use blocking send with timeout
+							select {
+							case output <- item:
+								sent = true
+							case <-time.After(cm.config.Timeout):
+								retryCount++
+								// Small delay before retry
+								time.Sleep(cm.config.BackoffDelay)
+							}
+						}
+					}
+
+					if !sent {
+						// Final attempt - use blocking send without timeout
+						output <- item
 					}
 				}
 			}(input)
@@ -144,13 +204,42 @@ func applyStage[T any](cm *ChannelManager, input <-chan T, stage func(T) T) <-ch
 		defer close(output)
 
 		for item := range input {
-			processed := stage(item)
-			select {
-			case output <- processed:
-				// Item sent successfully
-			case <-time.After(cm.config.Timeout):
-				// Timeout - skip this item
-			}
+			// Add panic recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// Log panic but continue processing other items
+						// In a real implementation, you might want to log this
+					}
+				}()
+				processed := stage(item)
+				// Use blocking/retry logic to prevent data loss
+				sent := false
+				retryCount := 0
+
+				for !sent && retryCount < cm.config.MaxRetries {
+					// Try non-blocking send first
+					select {
+					case output <- processed:
+						sent = true
+					default:
+						// Channel is full, use blocking send with timeout
+						select {
+						case output <- processed:
+							sent = true
+						case <-time.After(cm.config.Timeout):
+							retryCount++
+							// Small delay before retry
+							time.Sleep(cm.config.BackoffDelay)
+						}
+					}
+				}
+
+				if !sent {
+					// Final attempt - use blocking send without timeout
+					output <- processed
+				}
+			}()
 		}
 	}()
 
@@ -169,20 +258,65 @@ func Batch[T any](cm *ChannelManager, input <-chan T, batchSize int) <-chan []T 
 			batch = append(batch, item)
 
 			if len(batch) >= batchSize {
-				select {
-				case output <- batch:
+				// Use blocking/retry logic to prevent data loss
+				sent := false
+				retryCount := 0
+
+				for !sent && retryCount < cm.config.MaxRetries {
+					// Try non-blocking send first
+					select {
+					case output <- batch:
+						batch = make([]T, 0, batchSize)
+						sent = true
+					default:
+						// Channel is full, use blocking send with timeout
+						select {
+						case output <- batch:
+							batch = make([]T, 0, batchSize)
+							sent = true
+						case <-time.After(cm.config.Timeout):
+							retryCount++
+							// Small delay before retry
+							time.Sleep(cm.config.BackoffDelay)
+						}
+					}
+				}
+
+				if !sent {
+					// Final attempt - use blocking send without timeout
+					output <- batch
 					batch = make([]T, 0, batchSize)
-				case <-time.After(cm.config.Timeout):
-					// Timeout - skip this batch
 				}
 			}
 		}
 
 		// Send remaining items
 		if len(batch) > 0 {
-			select {
-			case output <- batch:
-			case <-time.After(cm.config.Timeout):
+			// Use blocking/retry logic to prevent data loss
+			sent := false
+			retryCount := 0
+
+			for !sent && retryCount < cm.config.MaxRetries {
+				// Try non-blocking send first
+				select {
+				case output <- batch:
+					sent = true
+				default:
+					// Channel is full, use blocking send with timeout
+					select {
+					case output <- batch:
+						sent = true
+					case <-time.After(cm.config.Timeout):
+						retryCount++
+						// Small delay before retry
+						time.Sleep(cm.config.BackoffDelay)
+					}
+				}
+			}
+
+			if !sent {
+				// Final attempt - use blocking send without timeout
+				output <- batch
 			}
 		}
 	}()
@@ -202,11 +336,31 @@ func RateLimit[T any](cm *ChannelManager, input <-chan T, rate time.Duration) <-
 
 		for item := range input {
 			<-ticker.C
-			select {
-			case output <- item:
-				// Item sent successfully
-			case <-time.After(cm.config.Timeout):
-				// Timeout - skip this item
+			// Use blocking/retry logic to prevent data loss
+			sent := false
+			retryCount := 0
+
+			for !sent && retryCount < cm.config.MaxRetries {
+				// Try non-blocking send first
+				select {
+				case output <- item:
+					sent = true
+				default:
+					// Channel is full, use blocking send with timeout
+					select {
+					case output <- item:
+						sent = true
+					case <-time.After(cm.config.Timeout):
+						retryCount++
+						// Small delay before retry
+						time.Sleep(cm.config.BackoffDelay)
+					}
+				}
+			}
+
+			if !sent {
+				// Final attempt - use blocking send without timeout
+				output <- item
 			}
 		}
 	}()
@@ -229,11 +383,31 @@ func RetryWithBackoff[T any](cm *ChannelManager, input <-chan T, operation func(
 				err := operation(item)
 				if err == nil {
 					success = true
-					select {
-					case output <- item:
-						// Item sent successfully
-					case <-time.After(cm.config.Timeout):
-						// Timeout - skip this item
+					// Use blocking/retry logic to prevent data loss
+					sent := false
+					retryCount := 0
+
+					for !sent && retryCount < cm.config.MaxRetries {
+						// Try non-blocking send first
+						select {
+						case output <- item:
+							sent = true
+						default:
+							// Channel is full, use blocking send with timeout
+							select {
+							case output <- item:
+								sent = true
+							case <-time.After(cm.config.Timeout):
+								retryCount++
+								// Small delay before retry
+								time.Sleep(cm.config.BackoffDelay)
+							}
+						}
+					}
+
+					if !sent {
+						// Final attempt - use blocking send without timeout
+						output <- item
 					}
 				} else {
 					attempts++
@@ -320,11 +494,31 @@ func Filter[T any](cu *ChannelUtils, input <-chan T, predicate func(T) bool) <-c
 
 		for item := range input {
 			if predicate(item) {
-				select {
-				case output <- item:
-					// Item sent successfully
-				case <-time.After(cu.manager.config.Timeout):
-					// Timeout - skip this item
+				// Use blocking/retry logic to prevent data loss
+				sent := false
+				retryCount := 0
+
+				for !sent && retryCount < cu.manager.config.MaxRetries {
+					// Try non-blocking send first
+					select {
+					case output <- item:
+						sent = true
+					default:
+						// Channel is full, use blocking send with timeout
+						select {
+						case output <- item:
+							sent = true
+						case <-time.After(cu.manager.config.Timeout):
+							retryCount++
+							// Small delay before retry
+							time.Sleep(cu.manager.config.BackoffDelay)
+						}
+					}
+				}
+
+				if !sent {
+					// Final attempt - use blocking send without timeout
+					output <- item
 				}
 			}
 		}
@@ -342,11 +536,31 @@ func Map[T any, U any](cu *ChannelUtils, input <-chan T, mapper func(T) U) <-cha
 
 		for item := range input {
 			mapped := mapper(item)
-			select {
-			case output <- mapped:
-				// Item sent successfully
-			case <-time.After(cu.manager.config.Timeout):
-				// Timeout - skip this item
+			// Use blocking/retry logic to prevent data loss
+			sent := false
+			retryCount := 0
+
+			for !sent && retryCount < cu.manager.config.MaxRetries {
+				// Try non-blocking send first
+				select {
+				case output <- mapped:
+					sent = true
+				default:
+					// Channel is full, use blocking send with timeout
+					select {
+					case output <- mapped:
+						sent = true
+					case <-time.After(cu.manager.config.Timeout):
+						retryCount++
+						// Small delay before retry
+						time.Sleep(cu.manager.config.BackoffDelay)
+					}
+				}
+			}
+
+			if !sent {
+				// Final attempt - use blocking send without timeout
+				output <- mapped
 			}
 		}
 	}()
@@ -397,13 +611,40 @@ func (cac *ContextAwareChannel[T]) ProcessWithContext(input <-chan T, processor 
 
 				err := processor(cac.ctx, item)
 				if err == nil {
-					select {
-					case output <- item:
-						// Item sent successfully
-					case <-cac.ctx.Done():
-						return
-					case <-time.After(cac.manager.config.Timeout):
-						// Timeout - skip this item
+					// Use blocking/retry logic to prevent data loss
+					sent := false
+					retryCount := 0
+
+					for !sent && retryCount < cac.manager.config.MaxRetries {
+						// Try non-blocking send first
+						select {
+						case output <- item:
+							sent = true
+						case <-cac.ctx.Done():
+							return
+						default:
+							// Channel is full, use blocking send with timeout
+							select {
+							case output <- item:
+								sent = true
+							case <-cac.ctx.Done():
+								return
+							case <-time.After(cac.manager.config.Timeout):
+								retryCount++
+								// Small delay before retry
+								time.Sleep(cac.manager.config.BackoffDelay)
+							}
+						}
+					}
+
+					if !sent {
+						// Final attempt - use blocking send without timeout
+						select {
+						case output <- item:
+							// Item sent successfully
+						case <-cac.ctx.Done():
+							return
+						}
 					}
 				}
 			case <-cac.ctx.Done():
@@ -433,6 +674,7 @@ func (cac *ContextAwareChannel[T]) FanOutWithContext(input <-chan T, outputs int
 			}
 		}()
 
+		index := 0
 		for {
 			select {
 			case item, ok := <-input:
@@ -440,17 +682,62 @@ func (cac *ContextAwareChannel[T]) FanOutWithContext(input <-chan T, outputs int
 					return
 				}
 
-				// Round-robin distribution
-				for _, ch := range outputChannels {
+				// Round-robin distribution with blocking/retry logic
+				sent := false
+				attempts := 0
+				maxAttempts := len(outputChannels) * cac.manager.config.MaxRetries // Try each channel up to MaxRetries times
+
+				for !sent && attempts < maxAttempts {
+					ch := outputChannels[index%len(outputChannels)]
+
+					// Try non-blocking send first
 					select {
 					case ch <- item:
 						// Item sent successfully
+						sent = true
 					case <-cac.ctx.Done():
 						return
-					case <-time.After(cac.manager.config.Timeout):
-						// Timeout - skip this channel
+					default:
+						// Channel is full, try next channel
+						index++
+						attempts++
+
+						// Small delay to prevent busy waiting
+						if attempts < maxAttempts {
+							time.Sleep(cac.manager.config.BackoffDelay)
+						}
 					}
 				}
+
+				if !sent {
+					// If all channels are full, use blocking send with retry logic
+					ch := outputChannels[index%len(outputChannels)]
+					retryCount := 0
+					for !sent && retryCount < cac.manager.config.MaxRetries {
+						select {
+						case ch <- item:
+							sent = true
+						case <-cac.ctx.Done():
+							return
+						case <-time.After(cac.manager.config.Timeout):
+							// Timeout reached, try next channel
+							index++
+							retryCount++
+							ch = outputChannels[index%len(outputChannels)]
+						}
+					}
+
+					if !sent {
+						// Final attempt - use blocking send without timeout
+						select {
+						case ch <- item:
+							sent = true
+						case <-cac.ctx.Done():
+							return
+						}
+					}
+				}
+				index++
 			case <-cac.ctx.Done():
 				return
 			}

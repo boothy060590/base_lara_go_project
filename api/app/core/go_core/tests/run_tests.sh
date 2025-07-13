@@ -192,6 +192,8 @@ show_usage() {
     echo "  integration/goroutine  Run integration tests for goroutine"
     echo "  unit/context           Run unit tests for context"
     echo "  integration/context    Run integration tests for context"
+    echo "  unit/pipeline          Run unit tests for pipeline"
+    echo "  integration/pipeline   Run integration tests for pipeline"
     echo "  benchmarks             Run benchmarks"
     echo "  race                   Run race detection tests"
     echo "  --with-benchmarks      Include benchmarks in test runs"
@@ -367,6 +369,12 @@ else
             ;;
         "integration/context")
             run_test_category "integration/context" "integration/context" "Integration Context"
+            ;;
+        "unit/pipeline")
+            run_test_category "unit/pipeline" "unit/pipeline" "Unit Pipeline"
+            ;;
+        "integration/pipeline")
+            run_test_category "integration/pipeline" "integration/pipeline" "Integration Pipeline"
             ;;
         "benchmarks")
             run_benchmarks

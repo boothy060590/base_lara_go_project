@@ -29,7 +29,7 @@ func (p *ContextServiceProvider) Register(container *app_core.Container) error {
 			eventBus := app_core.NewEventBus[any](nil, nil, nil)
 			eventStore := app_core.NewMemoryEventStore[any]()
 			eventManager := app_core.NewEventManager[any](eventBus, eventStore)
-			return app_core.NewContextAwareEventDispatcher[any](eventManager), nil
+			return app_core.NewEventBusWithConfig[any](nil, nil, nil, nil), nil
 		}
 
 		// Use existing event manager

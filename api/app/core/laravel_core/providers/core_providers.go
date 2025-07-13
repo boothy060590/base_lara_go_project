@@ -110,7 +110,7 @@ func (p *CoreServiceProvider) registerCache(container *app_core.Container) error
 
 	// Create context-aware cache (automatic optimization)
 	contextManager := app_core.NewContextManager(app_core.DefaultContextConfig())
-	contextAwareCache := app_core.NewContextAwareCache[any](cache, contextManager)
+	contextAwareCache := app_core.NewRedisCacheWithConfig[any](nil, map[string]interface{}{"context_manager": contextManager})
 
 	// Register both the original and context-aware versions
 	container.Singleton("cache", func() (any, error) {
@@ -124,13 +124,11 @@ func (p *CoreServiceProvider) registerCache(container *app_core.Container) error
 
 	// Register typed cache instances for all models
 	container.Singleton("cache.user", func() (any, error) {
-		userCache := app_core.NewLocalCache[any]()
-		return app_core.NewContextAwareCache[any](userCache, contextManager), nil
+		return app_core.NewRedisCacheWithConfig[any](nil, map[string]interface{}{"context_manager": contextManager}), nil
 	})
 
 	container.Singleton("cache.session", func() (any, error) {
-		sessionCache := app_core.NewLocalCache[any]()
-		return app_core.NewContextAwareCache[any](sessionCache, contextManager), nil
+		return app_core.NewRedisCacheWithConfig[any](nil, map[string]interface{}{"context_manager": contextManager}), nil
 	})
 
 	return nil
@@ -165,22 +163,8 @@ func (p *CoreServiceProvider) registerEventSystem(container *app_core.Container)
 	// Create event manager
 	eventManager := app_core.NewEventManager[any](eventBus, eventStore)
 
-	// Get goroutine manager and context config for unified optimized dispatcher
-	goroutineManagerInstance, _ := container.Resolve("goroutine.manager")
-	contextConfigInstance, _ := container.Resolve("context.config")
-
-	var gm *app_core.GoroutineManager[any]
-	var cc *app_core.ContextConfig
-
-	if goroutineManagerInstance != nil {
-		gm = goroutineManagerInstance.(*app_core.GoroutineManager[any])
-	}
-	if contextConfigInstance != nil {
-		cc = contextConfigInstance.(*app_core.ContextConfig)
-	}
-
 	// Create unified optimized event dispatcher
-	optimizedEventDispatcher := app_core.NewOptimizedEventDispatcher[any](eventManager, gm, cc)
+	optimizedEventDispatcher := app_core.NewEventBusWithConfig[any](nil, wsp, ca, pgo)
 
 	// Register both the original and optimized versions
 	container.Singleton("event_manager", func() (any, error) {
@@ -299,7 +283,7 @@ func (p *CoreServiceProvider) registerJobSystem(container *app_core.Container) e
 	jobDispatcher := app_core.NewJobDispatcher[any](queue, wsp, ca, pgo)
 
 	// Create context-aware job dispatcher (automatic optimization)
-	contextAwareJobDispatcher := app_core.NewContextAwareJobDispatcher[any](jobDispatcher)
+	contextAwareJobDispatcher := jobDispatcher
 
 	// Register both the original and context-aware versions
 	container.Singleton("job.dispatcher", func() (any, error) {

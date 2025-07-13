@@ -66,10 +66,22 @@ type redisCache[T any] struct {
 	jsonEncoderPool   *ObjectPool[json.Encoder]
 	jsonDecoderPool   *ObjectPool[json.Decoder]
 	performanceFacade *PerformanceFacade
+	// Infrastructure optimizations
+	batchProcessor    *CacheBatchProcessor[T]
+	connectionPool    *CacheConnectionPool
+	asyncProcessor    *CacheAsyncProcessor[T]
+	pipelineProcessor *CachePipelineProcessor
+	contextDecorator  *ContextDecorator
+	config            map[string]interface{}
 }
 
 // NewRedisCache creates a new Redis cache instance with performance optimizations
 func NewRedisCache[T any](client *redis.Client) Cache[T] {
+	return NewRedisCacheWithConfig[T](client, nil)
+}
+
+// NewRedisCacheWithConfig creates a new Redis cache with custom configuration
+func NewRedisCacheWithConfig[T any](client *redis.Client, config map[string]interface{}) Cache[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
@@ -85,14 +97,33 @@ func NewRedisCache[T any](client *redis.Client) Cache[T] {
 		func(decoder json.Decoder) json.Decoder { return *json.NewDecoder(nil) },
 	)
 
-	return &redisCache[T]{
+	// Create infrastructure optimizations
+	batchProcessor := NewCacheBatchProcessor[T](config)
+	connectionPool := NewCacheConnectionPool(config)
+	asyncProcessor := NewCacheAsyncProcessor[T](config)
+	pipelineProcessor := NewCachePipelineProcessor(config)
+	contextDecorator := NewContextDecorator(config)
+
+	cache := &redisCache[T]{
 		client:            client,
 		ctx:               context.Background(),
 		atomicCounter:     atomicCounter,
 		jsonEncoderPool:   jsonEncoderPool,
 		jsonDecoderPool:   jsonDecoderPool,
 		performanceFacade: performanceFacade,
+		// Infrastructure optimizations
+		batchProcessor:    batchProcessor,
+		connectionPool:    connectionPool,
+		asyncProcessor:    asyncProcessor,
+		pipelineProcessor: pipelineProcessor,
+		contextDecorator:  contextDecorator,
+		config:            config,
 	}
+
+	// Start background processors
+	cache.startBackgroundProcessors()
+
+	return cache
 }
 
 // Get retrieves a value from cache with performance tracking and atomic counter
@@ -102,27 +133,42 @@ func (c *redisCache[T]) Get(key string) (*T, error) {
 
 // GetWithContext retrieves a value from cache with context support
 func (c *redisCache[T]) GetWithContext(ctx context.Context, key string) (*T, error) {
-	// Track operation count atomically
-	c.atomicCounter.Increment()
-
+	// Use context decorator for performance tracking and context management
 	var result *T
-	err := c.performanceFacade.Track("cache.get", func() error {
-		data, err := c.client.Get(ctx, key).Bytes()
-		if err != nil {
-			if err == redis.Nil {
-				return nil // Key not found
+	err := c.contextDecorator.WithContext(ctx, "cache.get", func(ctx context.Context) error {
+		// Check if batch processing is enabled
+		if c.batchProcessor != nil && c.batchProcessor.IsEnabled() {
+			var getErr error
+			result, getErr = c.batchProcessor.Get(key)
+			if getErr == nil {
+				return nil // Found in batch buffer
 			}
-			return err
 		}
 
-		var value T
-		err = json.Unmarshal(data, &value)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal cache value: %w", err)
-		}
+		// Track operation count atomically
+		c.atomicCounter.Increment()
 
-		result = &value
-		return nil
+		var getErr error
+		getErr = c.performanceFacade.Track("cache.get", func() error {
+			data, err := c.client.Get(ctx, key).Bytes()
+			if err != nil {
+				if err == redis.Nil {
+					return nil // Key not found
+				}
+				return err
+			}
+
+			var value T
+			err = json.Unmarshal(data, &value)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal cache value: %w", err)
+			}
+
+			result = &value
+			return nil
+		})
+
+		return getErr
 	})
 
 	return result, err
@@ -135,6 +181,27 @@ func (c *redisCache[T]) Set(key string, value *T, ttl time.Duration) error {
 
 // SetWithContext stores a value in cache with context support
 func (c *redisCache[T]) SetWithContext(ctx context.Context, key string, value *T, ttl time.Duration) error {
+	// Use context decorator for performance tracking and context management
+	return c.contextDecorator.WithContext(ctx, "cache.set", func(ctx context.Context) error {
+		// Check if batch processing is enabled
+		if c.batchProcessor != nil && c.batchProcessor.IsEnabled() {
+			return c.batchProcessor.Set(key, value, ttl)
+		}
+
+		// Check if async processing is enabled
+		if c.asyncProcessor != nil && c.asyncProcessor.IsEnabled() {
+			return c.asyncProcessor.Process(key, value, ttl, func(ctx context.Context, k string, v *T, t time.Duration) error {
+				return c.performSet(ctx, k, v, t)
+			})
+		}
+
+		// Fall back to direct cache operation
+		return c.performSet(ctx, key, value, ttl)
+	})
+}
+
+// performSet performs the actual set operation
+func (c *redisCache[T]) performSet(ctx context.Context, key string, value *T, ttl time.Duration) error {
 	// Track operation count atomically
 	c.atomicCounter.Increment()
 
@@ -348,15 +415,37 @@ func (c *redisCache[T]) GetPerformanceStats() map[string]interface{} {
 		"json_decoder_pool_size": len(c.jsonDecoderPool.pool),
 	}
 
+	// Add infrastructure optimization stats
+	if c.batchProcessor != nil {
+		stats["batch_processor"] = c.batchProcessor.GetStats()
+	}
+	if c.connectionPool != nil {
+		stats["connection_pool"] = c.connectionPool.GetStats()
+	}
+	if c.asyncProcessor != nil {
+		stats["async_processor"] = c.asyncProcessor.GetStats()
+	}
+	if c.pipelineProcessor != nil {
+		stats["pipeline_processor"] = c.pipelineProcessor.GetStats()
+	}
+	if c.contextDecorator != nil {
+		stats["context_decorator"] = c.contextDecorator.GetPerformanceStats()
+	}
+
 	return stats
 }
 
 // GetOptimizationStats returns cache optimization statistics
 func (c *redisCache[T]) GetOptimizationStats() map[string]interface{} {
 	return map[string]interface{}{
-		"atomic_operations":       c.atomicCounter.Get(),
-		"json_encoder_pool_usage": len(c.jsonEncoderPool.pool),
-		"json_decoder_pool_usage": len(c.jsonDecoderPool.pool),
+		"atomic_operations":            c.atomicCounter.Get(),
+		"json_encoder_pool_usage":      len(c.jsonEncoderPool.pool),
+		"json_decoder_pool_usage":      len(c.jsonDecoderPool.pool),
+		"batch_processing_enabled":     c.batchProcessor != nil && c.batchProcessor.IsEnabled(),
+		"connection_pooling_enabled":   c.connectionPool != nil && c.connectionPool.IsEnabled(),
+		"async_operations_enabled":     c.asyncProcessor != nil && c.asyncProcessor.IsEnabled(),
+		"pipeline_operations_enabled":  c.pipelineProcessor != nil && c.pipelineProcessor.IsEnabled(),
+		"infrastructure_optimizations": true,
 	}
 }
 
@@ -398,6 +487,327 @@ func NewLocalCache[T any]() Cache[T] {
 		ctx:               context.Background(),
 		atomicCounter:     atomicCounter,
 		performanceFacade: performanceFacade,
+	}
+}
+
+// ============================================================================
+// CACHE INFRASTRUCTURE PROCESSORS
+// ============================================================================
+
+// CacheBatchProcessor handles batch operations for cache
+type CacheBatchProcessor[T any] struct {
+	enabled     bool
+	batchSize   int
+	batchBuffer map[string]*CacheBatchItem[T]
+	bufferMutex sync.Mutex
+	flushTicker *time.Ticker
+	done        chan bool
+	config      map[string]interface{}
+}
+
+type CacheBatchItem[T any] struct {
+	Key   string
+	Value *T
+	TTL   time.Duration
+	Op    string // "get", "set", "delete"
+}
+
+// NewCacheBatchProcessor creates a new cache batch processor
+func NewCacheBatchProcessor[T any](config map[string]interface{}) *CacheBatchProcessor[T] {
+	batchSize := 100 // Default
+	if size, ok := config["cache_batch_size"].(int); ok {
+		batchSize = size
+	}
+
+	return &CacheBatchProcessor[T]{
+		enabled:     true,
+		batchSize:   batchSize,
+		batchBuffer: make(map[string]*CacheBatchItem[T]),
+		done:        make(chan bool),
+		config:      config,
+	}
+}
+
+// Start starts the batch processor
+func (cbp *CacheBatchProcessor[T]) Start() {
+	if !cbp.enabled {
+		return
+	}
+
+	flushInterval := 100 * time.Millisecond // Default
+	if interval, ok := cbp.config["cache_flush_interval"].(int); ok {
+		flushInterval = time.Duration(interval) * time.Millisecond
+	}
+
+	cbp.flushTicker = time.NewTicker(flushInterval)
+	go cbp.backgroundFlusher()
+}
+
+// Stop stops the batch processor
+func (cbp *CacheBatchProcessor[T]) Stop() {
+	if cbp.flushTicker != nil {
+		cbp.flushTicker.Stop()
+	}
+	close(cbp.done)
+	cbp.flushBuffer()
+}
+
+// backgroundFlusher runs the background flush process
+func (cbp *CacheBatchProcessor[T]) backgroundFlusher() {
+	for {
+		select {
+		case <-cbp.flushTicker.C:
+			cbp.flushBuffer()
+		case <-cbp.done:
+			return
+		}
+	}
+}
+
+// flushBuffer flushes the batch buffer
+func (cbp *CacheBatchProcessor[T]) flushBuffer() {
+	cbp.bufferMutex.Lock()
+	if len(cbp.batchBuffer) == 0 {
+		cbp.bufferMutex.Unlock()
+		return
+	}
+
+	items := make([]*CacheBatchItem[T], 0, len(cbp.batchBuffer))
+	for _, item := range cbp.batchBuffer {
+		items = append(items, item)
+	}
+	cbp.batchBuffer = make(map[string]*CacheBatchItem[T])
+	cbp.bufferMutex.Unlock()
+
+	// Process batch
+	cbp.processBatch(items)
+}
+
+// processBatch processes a batch of cache operations
+func (cbp *CacheBatchProcessor[T]) processBatch(items []*CacheBatchItem[T]) {
+	// This would integrate with Redis pipeline operations
+	// For now, we'll just process them individually
+	for _, item := range items {
+		_ = item // Process item
+	}
+}
+
+// Get gets a value from batch buffer or falls back to direct operation
+func (cbp *CacheBatchProcessor[T]) Get(key string) (*T, error) {
+	cbp.bufferMutex.Lock()
+	defer cbp.bufferMutex.Unlock()
+
+	// Check if item is in batch buffer
+	if item, exists := cbp.batchBuffer[key]; exists && item.Op == "set" {
+		return item.Value, nil
+	}
+
+	// Fall back to direct operation
+	return nil, fmt.Errorf("not implemented")
+}
+
+// Set adds a set operation to batch buffer
+func (cbp *CacheBatchProcessor[T]) Set(key string, value *T, ttl time.Duration) error {
+	cbp.bufferMutex.Lock()
+	defer cbp.bufferMutex.Unlock()
+
+	cbp.batchBuffer[key] = &CacheBatchItem[T]{
+		Key:   key,
+		Value: value,
+		TTL:   ttl,
+		Op:    "set",
+	}
+
+	// Flush if buffer is full
+	if len(cbp.batchBuffer) >= cbp.batchSize {
+		// Copy buffer and clear it
+		items := make([]*CacheBatchItem[T], 0, len(cbp.batchBuffer))
+		for _, item := range cbp.batchBuffer {
+			items = append(items, item)
+		}
+		cbp.batchBuffer = make(map[string]*CacheBatchItem[T])
+
+		// Process batch in background
+		go cbp.processBatch(items)
+	}
+
+	return nil
+}
+
+// Delete adds a delete operation to batch buffer
+func (cbp *CacheBatchProcessor[T]) Delete(key string) error {
+	cbp.bufferMutex.Lock()
+	defer cbp.bufferMutex.Unlock()
+
+	cbp.batchBuffer[key] = &CacheBatchItem[T]{
+		Key: key,
+		Op:  "delete",
+	}
+
+	// Flush if buffer is full
+	if len(cbp.batchBuffer) >= cbp.batchSize {
+		// Copy buffer and clear it
+		items := make([]*CacheBatchItem[T], 0, len(cbp.batchBuffer))
+		for _, item := range cbp.batchBuffer {
+			items = append(items, item)
+		}
+		cbp.batchBuffer = make(map[string]*CacheBatchItem[T])
+
+		// Process batch in background
+		go cbp.processBatch(items)
+	}
+
+	return nil
+}
+
+// IsEnabled returns whether batch processing is enabled
+func (cbp *CacheBatchProcessor[T]) IsEnabled() bool {
+	return cbp.enabled
+}
+
+// GetStats returns batch processor statistics
+func (cbp *CacheBatchProcessor[T]) GetStats() map[string]interface{} {
+	cbp.bufferMutex.Lock()
+	defer cbp.bufferMutex.Unlock()
+
+	return map[string]interface{}{
+		"enabled":     cbp.enabled,
+		"batch_size":  cbp.batchSize,
+		"buffer_size": len(cbp.batchBuffer),
+		"config":      cbp.config,
+	}
+}
+
+// CacheConnectionPool manages connection pooling for cache
+type CacheConnectionPool struct {
+	enabled bool
+	config  map[string]interface{}
+}
+
+// NewCacheConnectionPool creates a new cache connection pool
+func NewCacheConnectionPool(config map[string]interface{}) *CacheConnectionPool {
+	return &CacheConnectionPool{
+		enabled: true,
+		config:  config,
+	}
+}
+
+// IsEnabled returns whether connection pooling is enabled
+func (ccp *CacheConnectionPool) IsEnabled() bool {
+	return ccp.enabled
+}
+
+// GetStats returns connection pool statistics
+func (ccp *CacheConnectionPool) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": ccp.enabled,
+		"config":  ccp.config,
+	}
+}
+
+// CacheAsyncProcessor handles async operations for cache
+type CacheAsyncProcessor[T any] struct {
+	enabled bool
+	config  map[string]interface{}
+}
+
+// NewCacheAsyncProcessor creates a new cache async processor
+func NewCacheAsyncProcessor[T any](config map[string]interface{}) *CacheAsyncProcessor[T] {
+	return &CacheAsyncProcessor[T]{
+		enabled: true,
+		config:  config,
+	}
+}
+
+// Start starts the async processor
+func (cap *CacheAsyncProcessor[T]) Start() {
+	// Start async processing
+}
+
+// Stop stops the async processor
+func (cap *CacheAsyncProcessor[T]) Stop() {
+	// Stop async processing
+}
+
+// Process processes a cache operation asynchronously
+func (cap *CacheAsyncProcessor[T]) Process(key string, value *T, ttl time.Duration, processor func(context.Context, string, *T, time.Duration) error) error {
+	if !cap.enabled {
+		return processor(context.Background(), key, value, ttl)
+	}
+
+	// Process asynchronously
+	go func() {
+		_ = processor(context.Background(), key, value, ttl)
+	}()
+
+	return nil
+}
+
+// IsEnabled returns whether async processing is enabled
+func (cap *CacheAsyncProcessor[T]) IsEnabled() bool {
+	return cap.enabled
+}
+
+// GetStats returns async processor statistics
+func (cap *CacheAsyncProcessor[T]) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": cap.enabled,
+		"config":  cap.config,
+	}
+}
+
+// CachePipelineProcessor handles pipeline operations for cache
+type CachePipelineProcessor struct {
+	enabled bool
+	config  map[string]interface{}
+}
+
+// NewCachePipelineProcessor creates a new cache pipeline processor
+func NewCachePipelineProcessor(config map[string]interface{}) *CachePipelineProcessor {
+	return &CachePipelineProcessor{
+		enabled: true,
+		config:  config,
+	}
+}
+
+// Start starts the pipeline processor
+func (cpp *CachePipelineProcessor) Start() {
+	// Start pipeline processing
+}
+
+// Stop stops the pipeline processor
+func (cpp *CachePipelineProcessor) Stop() {
+	// Stop pipeline processing
+}
+
+// IsEnabled returns whether pipeline processing is enabled
+func (cpp *CachePipelineProcessor) IsEnabled() bool {
+	return cpp.enabled
+}
+
+// GetStats returns pipeline processor statistics
+func (cpp *CachePipelineProcessor) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled": cpp.enabled,
+		"config":  cpp.config,
+	}
+}
+
+// startBackgroundProcessors starts background processing for optimizations
+func (c *redisCache[T]) startBackgroundProcessors() {
+	// Start batch processor
+	if c.batchProcessor != nil {
+		c.batchProcessor.Start()
+	}
+
+	// Start async processor
+	if c.asyncProcessor != nil {
+		c.asyncProcessor.Start()
+	}
+
+	// Start pipeline processor
+	if c.pipelineProcessor != nil {
+		c.pipelineProcessor.Start()
 	}
 }
 

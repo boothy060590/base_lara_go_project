@@ -579,8 +579,8 @@ func TestWorkStealingPerformance(t *testing.T) {
 
 		assert.Equal(t, int64(100), finalCount)
 
-		// Check metrics for work stealing activity
+		// Check metrics for work stealing activity - exact counts
 		metrics := pool.GetMetrics()
-		assert.GreaterOrEqual(t, metrics.TotalProcessed, int64(100))
+		assert.Equal(t, int64(100), metrics.TotalProcessed)
 	})
 }

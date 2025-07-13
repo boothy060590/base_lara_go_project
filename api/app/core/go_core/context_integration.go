@@ -301,8 +301,28 @@ func (cao *ContextAwareOperation[T]) Execute() (T, error) {
 		return result, err
 	}
 
-	// Execute without timeout
-	return cao.operation(cao.ctx)
+	// Execute without timeout but with context cancellation support
+	resultChan := make(chan T, 1)
+	errChan := make(chan error, 1)
+
+	err := cao.manager.ExecuteWithContext(cao.ctx, func(ctx context.Context) error {
+		result, execErr := cao.operation(ctx)
+		resultChan <- result
+		errChan <- execErr
+		return execErr
+	})
+
+	// If there was a context cancellation error, return it with zero value
+	if err != nil && (strings.Contains(err.Error(), "cancelled") || strings.Contains(err.Error(), "deadline exceeded")) {
+		var zero T
+		return zero, err
+	}
+
+	// Get the result from the channel
+	result := <-resultChan
+	_ = <-errChan // Drain the error channel
+
+	return result, err
 }
 
 // ============================================================================
@@ -491,284 +511,5 @@ func ExecuteWithGlobalTimeout(ctx context.Context, timeout time.Duration, fn fun
 // CONTEXT-AWARE SERVICE INTEGRATIONS
 // ============================================================================
 
-// ContextAwareEventDispatcher provides context-aware event dispatching
-type ContextAwareEventDispatcher[T any] struct {
-	dispatcher EventManagerInterface[T]
-	manager    *ContextManager
-}
-
-// NewContextAwareEventDispatcher creates a new context-aware event dispatcher
-func NewContextAwareEventDispatcher[T any](dispatcher EventManagerInterface[T]) *ContextAwareEventDispatcher[T] {
-	return &ContextAwareEventDispatcher[T]{
-		dispatcher: dispatcher,
-		manager:    NewContextManager(DefaultContextConfig()),
-	}
-}
-
-// Dispatch dispatches an event with context awareness
-func (caed *ContextAwareEventDispatcher[T]) Dispatch(ctx context.Context, event *Event[T]) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "event_dispatch_start", time.Now())
-	ctx = context.WithValue(ctx, "event_name", event.Name)
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "events") // TODO: Pass config map
-	return caed.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return caed.dispatcher.Dispatch(event)
-	})
-}
-
-// Listen registers a listener with context awareness
-func (caed *ContextAwareEventDispatcher[T]) Listen(eventName string, listener EventListener[T]) {
-	caed.dispatcher.Listen(eventName, func(ctx context.Context, event *Event[T]) error {
-		// Add context values for tracking
-		ctx = context.WithValue(ctx, "listener_start", time.Now())
-		ctx = context.WithValue(ctx, "event_name", eventName)
-
-		// Execute the listener with context optimization
-		err := listener(ctx, event)
-
-		// Add context values for completion
-		_ = context.WithValue(ctx, "listener_end", time.Now())
-
-		return err
-	})
-}
-
-// ContextAwareJobDispatcher provides context-aware job dispatching
-type ContextAwareJobDispatcher[T any] struct {
-	dispatcher JobDispatcher[T]
-	manager    *ContextManager
-}
-
-// NewContextAwareJobDispatcher creates a new context-aware job dispatcher
-func NewContextAwareJobDispatcher[T any](dispatcher JobDispatcher[T]) *ContextAwareJobDispatcher[T] {
-	return &ContextAwareJobDispatcher[T]{
-		dispatcher: dispatcher,
-		manager:    NewContextManager(DefaultContextConfig()),
-	}
-}
-
-// Dispatch dispatches a job with context awareness
-func (cajd *ContextAwareJobDispatcher[T]) Dispatch(ctx context.Context, job T) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "job_dispatch_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "jobs") // TODO: Pass config map
-	return cajd.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return cajd.dispatcher.Dispatch(job)
-	})
-}
-
-// DispatchSync dispatches a job synchronously with context awareness
-func (cajd *ContextAwareJobDispatcher[T]) DispatchSync(ctx context.Context, job T) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "job_dispatch_sync_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "jobs") // TODO: Pass config map
-	return cajd.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return cajd.dispatcher.DispatchSync(job)
-	})
-}
-
-// ContextAwareRepository provides context-aware repository operations
-type ContextAwareRepository[T any] struct {
-	repository Repository[T]
-	manager    *ContextManager
-}
-
-// NewContextAwareRepository creates a new context-aware repository
-func NewContextAwareRepository[T any](repository Repository[T], manager *ContextManager) *ContextAwareRepository[T] {
-	if manager == nil {
-		manager = NewContextManager(DefaultContextConfig())
-	}
-
-	return &ContextAwareRepository[T]{
-		repository: repository,
-		manager:    manager,
-	}
-}
-
-// Find finds a model by ID with context awareness
-func (car *ContextAwareRepository[T]) Find(ctx context.Context, id uint) (*T, error) {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "repository_find_start", time.Now())
-	ctx = context.WithValue(ctx, "repository_id", id)
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "repository") // TODO: Pass config map
-	resultChan := make(chan *T, 1)
-	errChan := make(chan error, 1)
-	err := car.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		result, findErr := car.repository.Find(id)
-		resultChan <- result
-		errChan <- findErr
-		return findErr
-	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "repository_find_end", time.Now())
-
-	result := <-resultChan
-	_ = <-errChan // Drain error channel
-
-	return result, err
-}
-
-// FindAll finds all models with context awareness
-func (car *ContextAwareRepository[T]) FindAll(ctx context.Context) ([]T, error) {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "repository_find_all_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "repository") // TODO: Pass config map
-	resultChan := make(chan []T, 1)
-	errChan := make(chan error, 1)
-	err := car.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		result, findErr := car.repository.FindAll()
-		resultChan <- result
-		errChan <- findErr
-		return findErr
-	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "repository_find_all_end", time.Now())
-
-	result := <-resultChan
-	_ = <-errChan // Drain error channel
-
-	return result, err
-}
-
-// Create creates a model with context awareness
-func (car *ContextAwareRepository[T]) Create(ctx context.Context, model *T) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "repository_create_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "repository") // TODO: Pass config map
-	err := car.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return car.repository.Create(model)
-	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "repository_create_end", time.Now())
-
-	return err
-}
-
-// Update updates a model with context awareness
-func (car *ContextAwareRepository[T]) Update(ctx context.Context, model *T) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "repository_update_start", time.Now())
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "repository") // TODO: Pass config map
-	err := car.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return car.repository.Update(model)
-	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "repository_update_end", time.Now())
-
-	return err
-}
-
-// Delete deletes a model with context awareness
-func (car *ContextAwareRepository[T]) Delete(ctx context.Context, id uint) error {
-	// Add context values for tracking
-	ctx = context.WithValue(ctx, "repository_delete_start", time.Now())
-	ctx = context.WithValue(ctx, "repository_delete_id", id)
-
-	// Execute with automatic timeout (config-driven)
-	timeout := GetOperationTimeout(nil, "repository") // TODO: Pass config map
-	err := car.manager.ExecuteWithTimeout(ctx, timeout, func(ctx context.Context) error {
-		return car.repository.Delete(id)
-	})
-
-	// Add context values for completion
-	_ = context.WithValue(ctx, "repository_delete_end", time.Now())
-
-	return err
-}
-
-// FindAsync finds a model by ID asynchronously with context awareness
-func (car *ContextAwareRepository[T]) FindAsync(ctx context.Context, id uint) <-chan RepositoryResult[T] {
-	resultChan := make(chan RepositoryResult[T], 1)
-
-	go func() {
-		defer close(resultChan)
-
-		// Add context values for tracking
-		ctx = context.WithValue(ctx, "repository_find_async_start", time.Now())
-		ctx = context.WithValue(ctx, "repository_find_async_id", id)
-
-		result, err := car.Find(ctx, id)
-
-		// Add context values for completion
-		_ = context.WithValue(ctx, "repository_find_async_end", time.Now())
-
-		if result != nil {
-			resultChan <- RepositoryResult[T]{
-				Data:  *result,
-				Error: err,
-			}
-		} else {
-			var zero T
-			resultChan <- RepositoryResult[T]{
-				Data:  zero,
-				Error: err,
-			}
-		}
-	}()
-
-	return resultChan
-}
-
-// FindManyAsync finds multiple models asynchronously with context awareness
-func (car *ContextAwareRepository[T]) FindManyAsync(ctx context.Context, ids []uint) <-chan RepositoryResult[[]T] {
-	resultChan := make(chan RepositoryResult[[]T], 1)
-
-	go func() {
-		defer close(resultChan)
-
-		// Add context values for tracking
-		ctx = context.WithValue(ctx, "repository_find_many_async_start", time.Now())
-		ctx = context.WithValue(ctx, "repository_find_many_async_ids", ids)
-
-		var results []*T
-		var err error
-
-		// Execute with automatic timeout
-		err = car.manager.ExecuteWithTimeout(ctx, 30*time.Second, func(ctx context.Context) error {
-			for _, id := range ids {
-				result, findErr := car.repository.Find(id)
-				if findErr != nil {
-					return findErr
-				}
-				results = append(results, result)
-			}
-			return nil
-		})
-
-		// Add context values for completion
-		_ = context.WithValue(ctx, "repository_find_many_async_end", time.Now())
-
-		// Convert []*T to []T
-		var resultSlice []T
-		for _, result := range results {
-			if result != nil {
-				resultSlice = append(resultSlice, *result)
-			}
-		}
-
-		resultChan <- RepositoryResult[[]T]{
-			Data:  resultSlice,
-			Error: err,
-		}
-	}()
-
-	return resultChan
-}
+// Note: Context-aware wrappers have been consolidated into canonical implementations
+// Use NewEventBus, NewRepository, NewJobDispatcher with context decorators instead

@@ -19,28 +19,23 @@ func TestCacheSystemIntegration(t *testing.T) {
 	require.NotNil(t, localCache, "Local cache should not be nil")
 
 	// Test context-aware cache integration
-	contextManager := go_core.NewContextManager(go_core.DefaultContextConfig())
-	contextCache := go_core.NewContextAwareCache(localCache, contextManager)
-	require.NotNil(t, contextCache, "Context-aware cache should not be nil")
-
-	// Test basic operations through context-aware cache
 	ctx := context.Background()
 	key := "integration_key"
 	value := "integration_value"
 
-	// Set through context-aware cache
-	err := contextCache.Set(ctx, key, &value, 1*time.Hour)
-	require.NoError(t, err, "Context-aware Set should not return error")
+	// Set through cache with context
+	err := localCache.SetWithContext(ctx, key, &value, 1*time.Hour)
+	require.NoError(t, err, "SetWithContext should not return error")
 
-	// Get through context-aware cache
-	retrieved, err := contextCache.Get(ctx, key)
-	require.NoError(t, err, "Context-aware Get should not return error")
+	// Get through cache with context
+	retrieved, err := localCache.GetWithContext(ctx, key)
+	require.NoError(t, err, "GetWithContext should not return error")
 	require.NotNil(t, retrieved, "Retrieved value should not be nil")
 	require.Equal(t, value, *retrieved, "Retrieved value should match original")
 
-	// Verify through underlying cache
+	// Verify through regular cache methods
 	underlyingRetrieved, err := localCache.Get(key)
-	require.NoError(t, err, "Underlying cache Get should not return error")
+	require.NoError(t, err, "Regular Get should not return error")
 	require.NotNil(t, underlyingRetrieved, "Underlying cache value should not be nil")
 	require.Equal(t, value, *underlyingRetrieved, "Underlying cache value should match")
 }
@@ -83,8 +78,6 @@ func TestCachePerformanceIntegration(t *testing.T) {
 // TestCacheContextIntegration tests context integration scenarios
 func TestCacheContextIntegration(t *testing.T) {
 	cache := go_core.NewLocalCache[string]()
-	contextManager := go_core.NewContextManager(go_core.DefaultContextConfig())
-	contextCache := go_core.NewContextAwareCache(cache, contextManager)
 
 	// Test with timeout context
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -94,12 +87,12 @@ func TestCacheContextIntegration(t *testing.T) {
 	value := "timeout_value"
 
 	// Set with timeout context
-	err := contextCache.Set(ctx, key, &value, 1*time.Hour)
-	require.NoError(t, err, "Set with timeout context should not return error")
+	err := cache.SetWithContext(ctx, key, &value, 1*time.Hour)
+	require.NoError(t, err, "SetWithContext with timeout context should not return error")
 
 	// Get with timeout context
-	retrieved, err := contextCache.Get(ctx, key)
-	require.NoError(t, err, "Get with timeout context should not return error")
+	retrieved, err := cache.GetWithContext(ctx, key)
+	require.NoError(t, err, "GetWithContext with timeout context should not return error")
 	require.NotNil(t, retrieved, "Retrieved value should not be nil")
 	require.Equal(t, value, *retrieved, "Retrieved value should match original")
 
@@ -108,13 +101,13 @@ func TestCacheContextIntegration(t *testing.T) {
 	cancelFunc() // Cancel immediately
 
 	// Operations with cancelled context should fail (context-aware cache respects context cancellation)
-	err = contextCache.Set(cancelledCtx, "cancelled_key", &value, 1*time.Hour)
-	require.Error(t, err, "Set with cancelled context should return error")
-	require.Contains(t, err.Error(), "cancelled", "Error should indicate context was cancelled")
+	err = cache.SetWithContext(cancelledCtx, "cancelled_key", &value, 1*time.Hour)
+	require.Error(t, err, "SetWithContext with cancelled context should return error")
+	require.Contains(t, err.Error(), "canceled", "Error should indicate context was cancelled")
 
-	retrieved, err = contextCache.Get(cancelledCtx, "cancelled_key")
-	require.Error(t, err, "Get with cancelled context should return error")
-	require.Contains(t, err.Error(), "cancelled", "Error should indicate context was cancelled")
+	retrieved, err = cache.GetWithContext(cancelledCtx, "cancelled_key")
+	require.Error(t, err, "GetWithContext with cancelled context should return error")
+	require.Contains(t, err.Error(), "canceled", "Error should indicate context was cancelled")
 }
 
 // TestCacheBatchIntegration tests batch operation integration

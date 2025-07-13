@@ -18,6 +18,7 @@ import (
 func TestEventBus_BasicDispatch(t *testing.T) {
 	// Create event bus with minimal dependencies
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	// Test data
 	eventName := "test.event"
@@ -59,7 +60,16 @@ func TestEventBus_BasicDispatch(t *testing.T) {
 
 // TestEventBus_AsyncDispatch tests asynchronous event dispatch
 func TestEventBus_AsyncDispatch(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
+	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
+
+	eventBus := go_core.NewEventBus[string](wsp, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.async"
 	eventData := "async data"
@@ -102,6 +112,7 @@ func TestEventBus_AsyncDispatch(t *testing.T) {
 // TestEventBus_MultipleListeners tests multiple listeners for the same event
 func TestEventBus_MultipleListeners(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.multiple"
 	eventData := "multiple data"
@@ -153,6 +164,7 @@ func TestEventBus_MultipleListeners(t *testing.T) {
 // TestEventBus_NoListeners tests dispatch when no listeners are registered
 func TestEventBus_NoListeners(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.none"
 
@@ -176,6 +188,7 @@ func TestEventBus_NoListeners(t *testing.T) {
 // TestEventBus_ListenerError tests handling of listener errors
 func TestEventBus_ListenerError(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.error"
 	expectedError := errors.New("listener error")
@@ -203,6 +216,7 @@ func TestEventBus_ListenerError(t *testing.T) {
 // TestEventBus_MultipleListenerErrors tests multiple listeners with errors
 func TestEventBus_MultipleListenerErrors(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.multiple_errors"
 	error1 := errors.New("error 1")
@@ -239,6 +253,7 @@ func TestEventBus_MultipleListenerErrors(t *testing.T) {
 // TestEventBus_RemoveListener tests removing event listeners
 func TestEventBus_RemoveListener(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.remove"
 
@@ -289,6 +304,7 @@ func TestEventBus_RemoveListener(t *testing.T) {
 // TestEventBus_ConcurrentDispatch tests concurrent event dispatch
 func TestEventBus_ConcurrentDispatch(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.concurrent"
 
@@ -346,6 +362,7 @@ func TestEventBus_ConcurrentDispatch(t *testing.T) {
 // TestEventBus_ConcurrentListeners tests concurrent listener registration
 func TestEventBus_ConcurrentListeners(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.concurrent_listeners"
 
@@ -377,6 +394,7 @@ func TestEventBus_ConcurrentListeners(t *testing.T) {
 // TestEventBus_PerformanceStats tests performance statistics collection
 func TestEventBus_PerformanceStats(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.stats"
 
@@ -417,6 +435,7 @@ func TestEventBus_PerformanceStats(t *testing.T) {
 // TestEventBus_OptimizationStats tests optimization statistics
 func TestEventBus_OptimizationStats(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.optimization"
 
@@ -453,6 +472,7 @@ func TestEventBus_OptimizationStats(t *testing.T) {
 // TestEventBus_WithContext tests context-aware event dispatch
 func TestEventBus_WithContext(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.context"
 
@@ -491,7 +511,16 @@ func TestEventBus_WithContext(t *testing.T) {
 
 // TestEventBus_ContextCancellation tests context cancellation handling
 func TestEventBus_ContextCancellation(t *testing.T) {
-	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	// Create work stealing pool for async processing
+	wspConfig := &go_core.WorkStealingConfig{
+		NumWorkers: 2,
+		QueueSize:  100,
+	}
+	wsp := go_core.NewWorkStealingPool[any](wspConfig)
+	defer wsp.Shutdown()
+
+	eventBus := go_core.NewEventBus[string](wsp, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.cancellation"
 
@@ -550,6 +579,7 @@ func TestEventBus_WorkStealingPool(t *testing.T) {
 	defer wsp.Shutdown()
 
 	eventBus := go_core.NewEventBus[string](wsp, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.work_stealing"
 
@@ -586,6 +616,7 @@ func TestEventBus_WorkStealingPool(t *testing.T) {
 // TestEventBus_EdgeCases tests various edge cases
 func TestEventBus_EdgeCases(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	t.Run("EmptyEventName", func(t *testing.T) {
 		listener := func(ctx context.Context, event *go_core.Event[string]) error {
@@ -632,6 +663,7 @@ func TestEventBus_EdgeCases(t *testing.T) {
 // TestEventBus_RaceConditions tests for race conditions
 func TestEventBus_RaceConditions(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.race"
 
@@ -684,6 +716,7 @@ func TestEventBus_RaceConditions(t *testing.T) {
 // TestEventBus_StressTest performs a stress test with high concurrency
 func TestEventBus_StressTest(t *testing.T) {
 	eventBus := go_core.NewEventBus[string](nil, nil, nil)
+	defer eventBus.Shutdown()
 
 	eventName := "test.stress"
 

@@ -178,7 +178,7 @@ func (w *Worker[T]) processJob(job GoroutineJob[T]) {
 	}
 }
 
-// Submit submits a job to the worker pool
+// Submit submits a job to the worker pool with blocking/retry logic
 func (wp *WorkerPool[T]) Submit(job GoroutineJob[T]) error {
 	// Check if context is cancelled first
 	select {
@@ -187,14 +187,12 @@ func (wp *WorkerPool[T]) Submit(job GoroutineJob[T]) error {
 	default:
 	}
 
-	// Try to submit the job
+	// Use blocking send with context cancellation to prevent data loss
 	select {
 	case wp.jobQueue <- job:
 		return nil
 	case <-wp.ctx.Done():
 		return fmt.Errorf("worker pool is shutting down")
-	default:
-		return fmt.Errorf("job queue is full")
 	}
 }
 
@@ -350,85 +348,7 @@ func (gm *GoroutineManager[T]) scaleDown(count int) {
 	}
 }
 
-// GoroutineAwareRepository extends Repository with automatic goroutine optimization
-type GoroutineAwareRepository[T any] struct {
-	repository Repository[T]
-	manager    *GoroutineManager[T]
-}
-
-// NewGoroutineAwareRepository creates a new goroutine-aware repository
-func NewGoroutineAwareRepository[T any](repo Repository[T], manager *GoroutineManager[T]) *GoroutineAwareRepository[T] {
-	return &GoroutineAwareRepository[T]{
-		repository: repo,
-		manager:    manager,
-	}
-}
-
-// FindAsync finds a model by ID asynchronously
-func (gar *GoroutineAwareRepository[T]) FindAsync(id uint) <-chan RepositoryResult[T] {
-	resultChan := make(chan RepositoryResult[T], 1)
-
-	go func() {
-		defer close(resultChan)
-
-		start := time.Now()
-		result, err := gar.repository.Find(id)
-		processingTime := time.Since(start)
-
-		// Update metrics
-		gar.manager.metrics.UpdateMetrics(
-			gar.manager.workerPool.GetActiveWorkerCount(),
-			len(gar.manager.workerPool.jobQueue),
-			processingTime,
-		)
-
-		var data T
-		if result != nil {
-			data = *result
-		}
-		resultChan <- RepositoryResult[T]{
-			Data:  data,
-			Error: err,
-		}
-	}()
-
-	return resultChan
-}
-
-// FindManyAsync finds multiple models asynchronously
-func (gar *GoroutineAwareRepository[T]) FindManyAsync(ids []uint) <-chan RepositoryResult[[]T] {
-	resultChan := make(chan RepositoryResult[[]T], 1)
-
-	go func() {
-		defer close(resultChan)
-
-		// Use worker pool for parallel processing
-		results := make([]T, 0, len(ids))
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-
-		for _, id := range ids {
-			wg.Add(1)
-			go func(id uint) {
-				defer wg.Done()
-				if result, err := gar.repository.Find(id); err == nil && result != nil {
-					mu.Lock()
-					results = append(results, *result) // *result is T
-					mu.Unlock()
-				}
-			}(id)
-		}
-
-		wg.Wait()
-
-		resultChan <- RepositoryResult[[]T]{
-			Data:  results,
-			Error: nil,
-		}
-	}()
-
-	return resultChan
-}
+// Note: GoroutineAwareRepository has been removed - use InfrastructureOptimizedRepository instead
 
 // RepositoryResult represents the result of an async repository operation
 type RepositoryResult[T any] struct {
@@ -436,64 +356,9 @@ type RepositoryResult[T any] struct {
 	Error error
 }
 
-// GoroutineAwareEventDispatcher extends EventDispatcher with automatic goroutine optimization
-type GoroutineAwareEventDispatcher[T any] struct {
-	dispatcher EventDispatcher[T]
-	manager    *GoroutineManager[T]
-}
+// Note: GoroutineAwareEventDispatcher has been removed - use InfrastructureOptimizedDispatcher instead
 
-// NewGoroutineAwareEventDispatcher creates a new goroutine-aware event dispatcher
-func NewGoroutineAwareEventDispatcher[T any](dispatcher EventDispatcher[T], manager *GoroutineManager[T]) *GoroutineAwareEventDispatcher[T] {
-	return &GoroutineAwareEventDispatcher[T]{
-		dispatcher: dispatcher,
-		manager:    manager,
-	}
-}
-
-// DispatchAsync dispatches an event asynchronously using the worker pool
-func (gaed *GoroutineAwareEventDispatcher[T]) DispatchAsync(event *Event[T]) error {
-	job := GoroutineJob[T]{
-		Job: Job[T]{
-			ID: fmt.Sprintf("event_%s_%d", event.Name, time.Now().UnixNano()),
-		},
-		Timeout: 30 * time.Second,
-		Handler: func(ctx context.Context, job *GoroutineJob[T]) error {
-			return gaed.dispatcher.Dispatch(event)
-		},
-	}
-
-	return gaed.manager.workerPool.Submit(job)
-}
-
-// GoroutineAwareJobDispatcher extends JobDispatcher with automatic goroutine optimization
-type GoroutineAwareJobDispatcher[T any] struct {
-	dispatcher JobDispatcher[T]
-	manager    *GoroutineManager[T]
-}
-
-// NewGoroutineAwareJobDispatcher creates a new goroutine-aware job dispatcher
-func NewGoroutineAwareJobDispatcher[T any](dispatcher JobDispatcher[T], manager *GoroutineManager[T]) *GoroutineAwareJobDispatcher[T] {
-	return &GoroutineAwareJobDispatcher[T]{
-		dispatcher: dispatcher,
-		manager:    manager,
-	}
-}
-
-// DispatchAsync dispatches a job asynchronously using the worker pool
-func (gajd *GoroutineAwareJobDispatcher[T]) DispatchAsync(job T) error {
-	// Create a job for the worker pool
-	poolJob := GoroutineJob[T]{
-		Job: Job[T]{
-			ID: fmt.Sprintf("job_%d", time.Now().UnixNano()),
-		},
-		Timeout: 30 * time.Second,
-		Handler: func(ctx context.Context, poolJob *GoroutineJob[T]) error {
-			return gajd.dispatcher.Dispatch(job)
-		},
-	}
-
-	return gajd.manager.workerPool.Submit(poolJob)
-}
+// Note: GoroutineAwareJobDispatcher has been removed - use InfrastructureOptimizedRepository instead
 
 // GetMetrics returns current goroutine metrics
 func (gm *GoroutineManager[T]) GetMetrics() GoroutineMetrics {
