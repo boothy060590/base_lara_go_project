@@ -180,6 +180,14 @@ func (w *Worker[T]) processJob(job GoroutineJob[T]) {
 
 // Submit submits a job to the worker pool
 func (wp *WorkerPool[T]) Submit(job GoroutineJob[T]) error {
+	// Check if context is cancelled first
+	select {
+	case <-wp.ctx.Done():
+		return fmt.Errorf("worker pool is shutting down")
+	default:
+	}
+
+	// Try to submit the job
 	select {
 	case wp.jobQueue <- job:
 		return nil

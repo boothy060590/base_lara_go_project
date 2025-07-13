@@ -190,19 +190,52 @@ show_usage() {
     echo "  integration/adapter    Run integration tests for adapter"
     echo "  unit/goroutine         Run unit tests for goroutine"
     echo "  integration/goroutine  Run integration tests for goroutine"
+    echo "  unit/context           Run unit tests for context"
+    echo "  integration/context    Run integration tests for context"
     echo "  benchmarks             Run benchmarks"
     echo "  race                   Run race detection tests"
+    echo "  --with-benchmarks      Include benchmarks in test runs"
     echo "  help                   Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0                     # Run all tests"
+    echo "  $0 --with-benchmarks   # Run all tests including benchmarks"
     echo "  $0 unit               # Run all unit tests"
+    echo "  $0 unit --with-benchmarks # Run unit tests with benchmarks"
     echo "  $0 unit/config        # Run unit tests for config only"
     echo "  $0 integration/config # Run integration tests for config only"
 }
 
+# Parse command line arguments
+INCLUDE_BENCHMARKS=false
+TEST_CATEGORY=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --with-benchmarks)
+            INCLUDE_BENCHMARKS=true
+            shift
+            ;;
+        help|-h|--help)
+            show_usage
+            exit 0
+            ;;
+        *)
+            if [[ -z "$TEST_CATEGORY" ]]; then
+                TEST_CATEGORY="$1"
+            else
+                echo -e "${RED}Error: Multiple test categories specified${NC}"
+                show_usage
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
 # Check command line arguments
-if [ $# -eq 0 ]; then
+if [[ -z "$TEST_CATEGORY" ]]; then
     # No arguments, run all tests
     echo -e "${BLUE}Starting comprehensive test suite...${NC}"
     
@@ -212,8 +245,10 @@ if [ $# -eq 0 ]; then
     # Run integration tests
     run_test_suite "integration" "integration" "Integration"
     
-    # Run benchmarks
-    run_benchmarks
+    # Run benchmarks if requested
+    if [[ "$INCLUDE_BENCHMARKS" == "true" ]]; then
+        run_benchmarks
+    fi
     
     # Run race detection tests
     run_race_tests
@@ -225,21 +260,41 @@ if [ $# -eq 0 ]; then
     run_concurrency_tests
 else
     # Handle specific test categories
-    case "$1" in
+    case "$TEST_CATEGORY" in
         "all")
             echo -e "${BLUE}Running all tests...${NC}"
             run_test_suite "unit" "unit" "Unit"
             run_test_suite "integration" "integration" "Integration"
-            run_benchmarks
+            if [[ "$INCLUDE_BENCHMARKS" == "true" ]]; then
+                run_benchmarks
+            fi
             run_race_tests
             run_performance_tests
             run_concurrency_tests
             ;;
         "unit")
             run_test_suite "unit" "unit" "Unit"
+            if [[ "$INCLUDE_BENCHMARKS" == "true" ]]; then
+                echo -e "\n${BLUE}Running Unit Test Benchmarks...${NC}"
+                echo "=========================================="
+                if [ -d "unit" ]; then
+                    cd unit
+                    go test -bench=. -benchmem ./...
+                    cd - > /dev/null
+                fi
+            fi
             ;;
         "integration")
             run_test_suite "integration" "integration" "Integration"
+            if [[ "$INCLUDE_BENCHMARKS" == "true" ]]; then
+                echo -e "\n${BLUE}Running Integration Test Benchmarks...${NC}"
+                echo "=========================================="
+                if [ -d "integration" ]; then
+                    cd integration
+                    go test -bench=. -benchmem ./...
+                    cd - > /dev/null
+                fi
+            fi
             ;;
         "unit/config")
             run_test_category "unit/config" "unit/config" "Unit Config"
@@ -306,6 +361,12 @@ else
             ;;
         "integration/goroutine")
             run_test_category "integration/goroutine" "integration/goroutine" "Integration Goroutine"
+            ;;
+        "unit/context")
+            run_test_category "unit/context" "unit/context" "Unit Context"
+            ;;
+        "integration/context")
+            run_test_category "integration/context" "integration/context" "Integration Context"
             ;;
         "benchmarks")
             run_benchmarks
