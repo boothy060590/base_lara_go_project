@@ -23,3 +23,6 @@ docker/sentry/nginx.conf
 docker/nginx.conf
 
 .cursorrules
+ARCHITECTURE_RULES.md
+CLAUDE_FRAMEWORK_RULES.md
+TODO.md
