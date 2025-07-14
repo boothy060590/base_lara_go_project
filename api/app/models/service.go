@@ -2,23 +2,21 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // Service represents a service in the system
 type Service struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	Name        string         `gorm:"type:varchar(255);not null" json:"name"`
-	Description string         `gorm:"type:text" json:"description"`
-	Slug        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"slug"`
-	Price       float64        `gorm:"type:decimal(10,2);not null" json:"price"`
-	CategoryID  uint           `json:"category_id"`
-	Category    Category       `json:"category" gorm:"foreignKey:CategoryID"`
-	IsActive    bool           `gorm:"default:true" json:"is_active"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Slug        string     `json:"slug"`
+	Price       float64    `json:"price"`
+	CategoryID  uint       `json:"category_id"`
+	Category    Category   `json:"category"`
+	IsActive    bool       `json:"is_active"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 // TableName returns the table name for the Service model

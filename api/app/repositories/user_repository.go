@@ -3,44 +3,32 @@ package repositories
 import (
 	app_core "base_lara_go_project/app/core/go_core"
 	"base_lara_go_project/app/models"
-	"time"
-
-	"gorm.io/gorm"
 )
 
-// UserRepository provides data access for users using the new generic model system
+// UserRepository provides data access for users using canonical Repository[T] interface
 type UserRepository struct {
-	model *app_core.BaseModel[models.User]
+	repository app_core.Repository[models.User]
+	cache      app_core.Cache[models.User]
 }
 
-// NewUserRepository creates a new user repository
-func NewUserRepository(db *gorm.DB, cache app_core.Cache[models.User], wsp any, ca any, pgo any) *UserRepository {
-	config := app_core.ModelConfig{
-		TableName: "users",
-		Traits: app_core.ModelTraits{
-			Cacheable:   true,
-			SoftDeletes: true,
-			HasRoles:    true,
-			Timestamps:  true,
-		},
-		CacheTTL:    30 * time.Minute,
-		CachePrefix: "user",
-	}
-
+// NewUserRepository creates a new user repository using canonical Repository[T]
+func NewUserRepository(repository app_core.Repository[models.User], cache app_core.Cache[models.User]) *UserRepository {
 	return &UserRepository{
-		model: app_core.NewBaseModel[models.User](db, cache, config, wsp, ca, pgo),
+		repository: repository,
+		cache:      cache,
 	}
 }
 
 // Find retrieves a user by ID with automatic caching
 func (r *UserRepository) Find(id uint) (*models.User, error) {
-	return r.model.Find(id)
+	return r.repository.Find(id)
 }
 
 // FindByEmail retrieves a user by email
 func (r *UserRepository) FindByEmail(email string) (*models.User, error) {
-	// Use the generic Where method
-	users, err := r.model.Where("email = ?", email).Get()
+	// Use the canonical repository Where method
+	query := r.repository.Where(map[string]any{"email": email})
+	users, err := query.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -52,47 +40,49 @@ func (r *UserRepository) FindByEmail(email string) (*models.User, error) {
 
 // Create creates a new user with automatic cache invalidation
 func (r *UserRepository) Create(user *models.User) error {
-	return r.model.Create(user)
+	return r.repository.Create(user)
 }
 
 // Update updates an existing user with automatic cache invalidation
 func (r *UserRepository) Update(user *models.User) error {
-	return r.model.Update(user)
+	return r.repository.Update(user)
 }
 
 // Delete deletes a user with automatic cache invalidation
 func (r *UserRepository) Delete(id uint) error {
-	return r.model.Delete(id)
+	return r.repository.Delete(id)
 }
 
 // SoftDelete soft deletes a user
 func (r *UserRepository) SoftDelete(id uint) error {
-	return r.model.SoftDelete(id)
+	// Use canonical repository Delete method (soft delete handled by model)
+	return r.repository.Delete(id)
 }
 
 // FindAll retrieves all users with pagination
 func (r *UserRepository) FindAll(page, perPage int) ([]models.User, int64, error) {
-	return r.model.Paginate(page, perPage)
+	// Use canonical repository Where method with pagination
+	query := r.repository.Where(map[string]any{})
+	return query.Paginate(page, perPage)
 }
 
 // FindByRole retrieves users by role
 func (r *UserRepository) FindByRole(roleName string) ([]models.User, error) {
-	// This would need a custom query implementation
-	// For now, return empty slice
-	return []models.User{}, nil
+	// Use canonical repository Where method
+	query := r.repository.Where(map[string]any{"role": roleName})
+	return query.Get()
 }
 
 // FindActive retrieves active users
 func (r *UserRepository) FindActive() ([]models.User, error) {
-	// This would need a custom query implementation
-	// For now, return empty slice
-	return []models.User{}, nil
+	// Use canonical repository Where method
+	query := r.repository.Where(map[string]any{"status": "active"})
+	return query.Get()
 }
 
 // Count returns the total number of users
 func (r *UserRepository) Count() (int64, error) {
-	// TODO: Implement count method in BaseModel
-	return 0, nil
+	return r.repository.Count()
 }
 
 // Exists checks if a user exists

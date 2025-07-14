@@ -2,19 +2,17 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // Permission represents a permission in the system
 type Permission struct {
-	ID          uint           `json:"id" gorm:"primaryKey"`
-	Name        string         `gorm:"type:varchar(64);unique;not null" json:"name"`
-	Description string         `gorm:"type:varchar(255)" json:"description"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
-	Roles       []Role         `gorm:"many2many:role_permissions;" json:"roles"`
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	Roles       []Role     `json:"roles"`
 }
 
 // TableName returns the table name for the Permission model

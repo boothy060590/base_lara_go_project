@@ -5,22 +5,21 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 // User represents a user in the system with Laravel-style traits
 type User struct {
-	ID            uint           `json:"id" gorm:"primaryKey"`
-	FirstName     string         `gorm:"type:varchar(255);not null" json:"first_name"`
-	LastName      string         `gorm:"type:varchar(255);not null" json:"last_name"`
-	Email         string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
-	Password      string         `gorm:"size:255;not null;" json:"password"`
-	ResetPassword bool           `gorm:"default:false" json:"reset_password"`
-	MobileNumber  string         `gorm:"type:varchar(20)" json:"mobile_number"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
-	Roles         []Role         `gorm:"many2many:user_roles;" json:"roles"`
+	ID            uint       `json:"id"`
+	FirstName     string     `json:"first_name"`
+	LastName      string     `json:"last_name"`
+	Email         string     `json:"email"`
+	Password      string     `json:"-"`
+	ResetPassword bool       `json:"reset_password"`
+	MobileNumber  string     `json:"mobile_number"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	Roles         []Role     `json:"roles"`
 }
 
 // TableName returns the table name for the User
@@ -28,8 +27,8 @@ func (User) TableName() string {
 	return "users"
 }
 
-// BeforeSave is a GORM hook that hashes the password before saving
-func (user *User) BeforeSave(tx *gorm.DB) (err error) {
+// HashPassword hashes the user's password if it's not already hashed
+func (user *User) HashPassword() error {
 	// Only hash if not already hashed
 	if !strings.HasPrefix(user.Password, "$2a$") && !strings.HasPrefix(user.Password, "$2b$") && !strings.HasPrefix(user.Password, "$2y$") {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)

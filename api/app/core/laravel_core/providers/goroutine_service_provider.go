@@ -3,6 +3,7 @@ package providers
 import (
 	app_core "base_lara_go_project/app/core/go_core"
 	"context"
+	"database/sql"
 	"log"
 )
 
@@ -20,12 +21,17 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 
 	// Register goroutine-aware event dispatcher that works with existing events
 	container.Singleton("goroutine.event_dispatcher", func() (any, error) {
-		// Create a new event bus for goroutine optimization
-		eventBus := app_core.NewEventBus[any](nil, nil, nil)
+		// Get required optimization dependencies
+		wsp, _ := container.Resolve("work_stealing_pool")
+		ca, _ := container.Resolve("custom_allocator")
+		pgo, _ := container.Resolve("profile_guided_optimizer")
 
-		// Create goroutine-aware dispatcher
-		goroutineManager := app_core.NewGoroutineManager[any](nil)
-		return app_core.NewEventBusWithConfig[any](nil, nil, nil, nil), nil
+		// Return canonical event bus with goroutine optimizations
+		return app_core.NewEventBus[any](
+			wsp.(*app_core.WorkStealingPool[any]),
+			ca.(*app_core.CustomAllocator[any]),
+			pgo.(*app_core.ProfileGuidedOptimizer[any]),
+		), nil
 	})
 
 	// Register goroutine-aware job dispatcher
@@ -38,9 +44,8 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 			// Create job dispatcher
 			jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
 
-			// Create goroutine-aware dispatcher
-			goroutineManager := app_core.NewGoroutineManager[any](nil)
-			return app_core.NewGoroutineAwareJobDispatcher[any](jobDispatcher, goroutineManager), nil
+			// JobDispatcher already has goroutine optimizations built-in
+			return jobDispatcher, nil
 		}
 
 		// Use existing queue
@@ -48,9 +53,8 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 		// Create job dispatcher
 		jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
 
-		// Create goroutine-aware dispatcher
-		goroutineManager := app_core.NewGoroutineManager[any](nil)
-		return app_core.NewGoroutineAwareJobDispatcher[any](jobDispatcher, goroutineManager), nil
+		// JobDispatcher already has goroutine optimizations built-in
+		return jobDispatcher, nil
 	})
 
 	// Register goroutine-aware repository factory
@@ -93,7 +97,7 @@ func (p *GoroutineServiceProvider) setupGoroutineOptimization(container *app_cor
 		return err
 	}
 
-	goroutineDispatcher := dispatcherInstance.(*app_core.GoroutineAwareEventDispatcher[any])
+	goroutineDispatcher := dispatcherInstance.(app_core.EventDispatcher[any])
 
 	// Get the existing event manager to register listeners
 	eventManagerInstance, err := container.Resolve("event_manager")
@@ -120,25 +124,22 @@ type GoroutineRepositoryFactory struct {
 	container *app_core.Container
 }
 
-// Create creates a new goroutine-aware repository for a given model type
-func (f *GoroutineRepositoryFactory) Create(repository app_core.Repository[any]) *app_core.GoroutineAwareRepository[any] {
-	// Get the goroutine manager
-	managerInstance, err := f.container.Resolve("goroutine.manager")
-	if err != nil {
-		// Create a new manager if not found
-		manager := app_core.NewGoroutineManager[any](nil)
-		return app_core.NewGoroutineAwareRepository(repository, manager)
-	}
-
-	// Use existing manager
-	manager := managerInstance.(*app_core.GoroutineManager[any])
-	return app_core.NewGoroutineAwareRepository(repository, manager)
+// Create creates a new goroutine-optimized repository
+func (f *GoroutineRepositoryFactory) Create(db *sql.DB) app_core.Repository[any] {
+	wsp, _ := f.container.Resolve("work_stealing_pool")
+	ca, _ := f.container.Resolve("custom_allocator")
+	pgo, _ := f.container.Resolve("profile_guided_optimizer")
+	return app_core.NewRepository[any](db,
+		wsp.(*app_core.WorkStealingPool[any]),
+		ca.(*app_core.CustomAllocator[any]),
+		pgo.(*app_core.ProfileGuidedOptimizer[any]),
+	)
 }
 
 // GoroutineListenerOptimizer automatically optimizes listeners with goroutines
 type GoroutineListenerOptimizer struct {
 	eventManager        app_core.EventManagerInterface[any]
-	goroutineDispatcher *app_core.GoroutineAwareEventDispatcher[any]
+	goroutineDispatcher app_core.EventDispatcher[any]
 }
 
 // OptimizeListener wraps a listener with goroutine optimization

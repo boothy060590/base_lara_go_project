@@ -2,14 +2,18 @@ package go_core
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
-	"sync"
+	"reflect"
+	"strings"
 	"time"
 
-	"gorm.io/gorm"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // Repository defines a generic repository interface for any model type
+// Uses raw SQL for maximum performance with comprehensive safety
 type Repository[T any] interface {
 	// Basic CRUD operations
 	Find(id uint) (*T, error)
@@ -53,6 +57,16 @@ type Repository[T any] interface {
 	// Performance operations
 	GetPerformanceStats() map[string]interface{}
 	GetOptimizationStats() map[string]interface{}
+
+	// Bulk operations for complex scenarios
+	BulkCreate(models []*T) error
+	BulkUpdate(models []*T) error
+	BulkDelete(ids []uint) error
+
+	// Context-aware bulk operations
+	BulkCreateWithContext(ctx context.Context, models []*T) error
+	BulkUpdateWithContext(ctx context.Context, models []*T) error
+	BulkDeleteWithContext(ctx context.Context, ids []uint) error
 }
 
 // Query defines a generic query builder interface
@@ -79,65 +93,84 @@ type Query[T any] interface {
 	WithContext(ctx context.Context) Query[T]
 }
 
-// repository implements Repository[T] with GORM and performance tracking
+// repository implements Repository[T] with raw SQL and performance tracking
 type repository[T any] struct {
-	db                *gorm.DB
-	performanceFacade *PerformanceFacade
-	// Performance optimizations (safely used for non-database operations)
-	objectPool         *ObjectPool[T] // Used for data processing, NOT database operations
-	atomicCounter      *AtomicCounter // Safe for concurrent counting
+	// Database connection and pooling
+	db             *sql.DB
+	connectionPool *ConnectionPool
+	statementCache *StatementCache
+
+	// Performance tracking
+	performanceFacade  *PerformanceFacade
+	atomicCounter      *AtomicCounter
 	optimizationEngine *OptimizationEngine
 
-	// New optimization fields
+	// Optimization dependencies
 	workStealingPool *WorkStealingPool[any]
 	customAllocator  *CustomAllocator[any]
 	profileOptimizer *ProfileGuidedOptimizer[any]
+
 	// Infrastructure optimizations
 	batchProcessor    *RepositoryBatchProcessor[T]
 	asyncProcessor    *RepositoryAsyncProcessor[T]
 	pipelineProcessor *RepositoryPipelineProcessor
-	connectionPool    *RepositoryConnectionPool
 	contextDecorator  *ContextDecorator
-	config            map[string]interface{}
+
+	// Model metadata
+	tableName      string
+	fieldValidator *FieldValidator
+	config         map[string]interface{}
+
+	// Safety and validation
+	sqlValidator *SQLValidator
 }
 
-// NewRepository creates a new repository instance with performance tracking and optimizations
-// Accept optimization dependencies
-func NewRepository[T any](db *gorm.DB, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
+// NewRepository creates a new repository instance with raw SQL and performance tracking
+func NewRepository[T any](db *sql.DB, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
 	return NewRepositoryWithConfig[T](db, nil, wsp, ca, pgo)
 }
 
 // NewRepositoryWithConfig creates a new repository with custom configuration
-func NewRepositoryWithConfig[T any](db *gorm.DB, config map[string]interface{}, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
-	perf := NewPerformanceFacade()
+func NewRepositoryWithConfig[T any](db *sql.DB, config map[string]interface{}, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
+	// Determine table name from type
+	var model T
+	tableName := getTableName(model)
 
-	objectPool := NewObjectPool[T](100, func() T { return *new(T) }, func(entity T) T { return *new(T) })
+	// Create performance tracking
+	perf := NewPerformanceFacade()
 	atomicCounter := NewAtomicCounter()
 	optimizationEngine := NewOptimizationEngine()
 
 	// Create infrastructure optimizations
+	connectionPool := NewConnectionPool(config)
+	statementCache := NewStatementCache(config)
 	batchProcessor := NewRepositoryBatchProcessor[T](config)
 	asyncProcessor := NewRepositoryAsyncProcessor[T](config)
 	pipelineProcessor := NewRepositoryPipelineProcessor(config)
-	connectionPool := NewRepositoryConnectionPool(config)
 	contextDecorator := NewContextDecorator(config)
+
+	// Create safety components
+	fieldValidator := NewFieldValidator(tableName)
+	sqlValidator := NewSQLValidator()
 
 	repo := &repository[T]{
 		db:                 db,
+		connectionPool:     connectionPool,
+		statementCache:     statementCache,
 		performanceFacade:  perf,
-		objectPool:         objectPool,
 		atomicCounter:      atomicCounter,
 		optimizationEngine: optimizationEngine,
 		workStealingPool:   wsp,
 		customAllocator:    ca,
 		profileOptimizer:   pgo,
-		// Infrastructure optimizations
-		batchProcessor:    batchProcessor,
-		asyncProcessor:    asyncProcessor,
-		pipelineProcessor: pipelineProcessor,
-		connectionPool:    connectionPool,
-		contextDecorator:  contextDecorator,
-		config:            config,
+		batchProcessor:     batchProcessor,
+		asyncProcessor:     asyncProcessor,
+		pipelineProcessor:  pipelineProcessor,
+		contextDecorator:   contextDecorator,
+		tableName:          tableName,
+		fieldValidator:     fieldValidator,
+		sqlValidator:       sqlValidator,
+		config:             config,
 	}
 
 	// Start background processors
@@ -146,35 +179,30 @@ func NewRepositoryWithConfig[T any](db *gorm.DB, config map[string]interface{}, 
 	return repo
 }
 
-// Helper for allocating in-memory objects
-func (r *repository[T]) allocate() T {
-	if r.customAllocator != nil {
-		obj, _ := r.customAllocator.Allocate(0)
-		if obj == nil {
-			// Fallback to object pool if custom allocator returns nil
-			return r.objectPool.Get()
-		}
-		return obj.(T)
+// getTableName extracts table name from model type
+func getTableName(v interface{}) string {
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
 	}
-	return r.objectPool.Get()
+
+	// Check for TableName method
+	if _, ok := t.MethodByName("TableName"); ok {
+		// Call the method to get table name
+		// This is a simplified version - in practice you'd need reflection to call it
+		return strings.ToLower(t.Name()) + "s"
+	}
+
+	return strings.ToLower(t.Name()) + "s"
 }
 
-func (r *repository[T]) deallocate(obj T) {
-	if r.customAllocator != nil {
-		_ = r.customAllocator.Deallocate(obj, 0)
-	} else {
-		r.objectPool.Put(obj)
-	}
-}
-
-// Find retrieves a model by ID with performance tracking and atomic counter
+// Find retrieves a model by ID with raw SQL and performance tracking
 func (r *repository[T]) Find(id uint) (*T, error) {
 	return r.FindWithContext(context.Background(), id)
 }
 
 // FindWithContext retrieves a model by ID with context support
 func (r *repository[T]) FindWithContext(ctx context.Context, id uint) (*T, error) {
-	// Track operation count atomically
 	r.atomicCounter.Increment()
 
 	var result *T
@@ -186,26 +214,44 @@ func (r *repository[T]) FindWithContext(ctx context.Context, id uint) (*T, error
 		default:
 		}
 
-		// Create fresh entity for database operation (avoid concurrency issues)
-		var entity T
-		if err := r.db.WithContext(ctx).First(&entity, id).Error; err != nil {
-			return err
+		// Build safe parameterized query
+		query := fmt.Sprintf("SELECT * FROM %s WHERE id = ? AND deleted_at IS NULL", r.tableName)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
+
+		// Execute query with context
+		row := stmt.QueryRowContext(ctx, id)
+
+		// Scan result into model
+		var entity T
+		if err := r.scanRowToStruct(row, &entity); err != nil {
+			return fmt.Errorf("failed to scan row: %w", err)
+		}
+
 		result = &entity
 		return nil
 	})
+
 	return result, err
 }
 
-// FindBy retrieves a model by field and value with performance tracking and atomic counter
+// FindBy retrieves a model by field and value with raw SQL
 func (r *repository[T]) FindBy(field string, value any) (*T, error) {
 	return r.FindByWithContext(context.Background(), field, value)
 }
 
 // FindByWithContext retrieves a model by field and value with context support
 func (r *repository[T]) FindByWithContext(ctx context.Context, field string, value any) (*T, error) {
-	// Track operation count atomically
 	r.atomicCounter.Increment()
+
+	// Validate field name to prevent SQL injection
+	if err := r.fieldValidator.ValidateField(field); err != nil {
+		return nil, fmt.Errorf("invalid field name: %w", err)
+	}
 
 	var result *T
 	err := r.performanceFacade.Track("repository.find_by", func() error {
@@ -216,18 +262,32 @@ func (r *repository[T]) FindByWithContext(ctx context.Context, field string, val
 		default:
 		}
 
-		// Create fresh entity for database operation (avoid concurrency issues)
-		var entity T
-		if err := r.db.WithContext(ctx).Where(field+" = ?", value).First(&entity).Error; err != nil {
-			return err
+		// Build safe parameterized query
+		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ? AND deleted_at IS NULL LIMIT 1", r.tableName, field)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
+
+		// Execute query with context
+		row := stmt.QueryRowContext(ctx, value)
+
+		// Scan result into model
+		var entity T
+		if err := r.scanRowToStruct(row, &entity); err != nil {
+			return fmt.Errorf("failed to scan row: %w", err)
+		}
+
 		result = &entity
 		return nil
 	})
+
 	return result, err
 }
 
-// FindAll retrieves all records with performance tracking and pipeline optimization
+// FindAll retrieves all records with raw SQL and optimization
 func (r *repository[T]) FindAll() ([]T, error) {
 	return r.FindAllWithContext(context.Background())
 }
@@ -243,49 +303,804 @@ func (r *repository[T]) FindAllWithContext(ctx context.Context) ([]T, error) {
 		default:
 		}
 
-		// Get all records (database operation - use fresh objects)
-		if err := r.db.WithContext(ctx).Find(&result).Error; err != nil {
-			return err
+		// Build safe query
+		query := fmt.Sprintf("SELECT * FROM %s WHERE deleted_at IS NULL", r.tableName)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
 		}
 
-		// Use profile-guided optimization to determine processing strategy
-		if r.profileOptimizer != nil {
-			r.profileOptimizer.GetMetrics() // Trigger optimization analysis
+		// Execute query with context
+		rows, err := stmt.QueryContext(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to execute query: %w", err)
+		}
+		defer rows.Close()
+
+		// Scan results
+		for rows.Next() {
+			var entity T
+			if err := r.scanRowToStruct(rows, &entity); err != nil {
+				return fmt.Errorf("failed to scan row: %w", err)
+			}
+			result = append(result, entity)
 		}
 
-		// Use work stealing pool for concurrent processing of large datasets
+		// Use work stealing pool for processing large datasets
 		if r.workStealingPool != nil && len(result) > 100 {
 			return r.processWithWorkStealing(ctx, result)
 		}
 
-		// Use channel-based pipeline for processing large datasets (safe - in-memory only)
-		if len(result) > 100 { // Only use pipeline for larger datasets
-			pipeline := NewPipeline[T]()
-			processed := pipeline.Execute(result)
+		return nil
+	})
 
-			// Collect results (safe to use object pool for data processing)
-			optimized := make([]T, 0, len(result))
-			for item := range processed {
-				// Check for context cancellation during processing
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				// Safe to use object pool here - this is data processing, not database operations
-				optimized = append(optimized, item)
+	return result, err
+}
+
+// Create saves a new model with raw SQL
+func (r *repository[T]) Create(model *T) error {
+	return r.CreateWithContext(context.Background(), model)
+}
+
+// CreateWithContext saves a new model with context support
+func (r *repository[T]) CreateWithContext(ctx context.Context, model *T) error {
+	return r.contextDecorator.WithContext(ctx, "repository.create", func(ctx context.Context) error {
+		// Check if batch processing is enabled
+		if r.batchProcessor != nil && r.batchProcessor.IsEnabled() {
+			return r.batchProcessor.AddItem(model, "create")
+		}
+
+		// Check if async processing is enabled
+		if r.asyncProcessor != nil && r.asyncProcessor.IsEnabled() {
+			return r.asyncProcessor.Process(model, "create", r.performCreate)
+		}
+
+		// Perform synchronous create
+		return r.performCreate(ctx, model)
+	})
+}
+
+// performCreate performs the actual create operation with raw SQL
+func (r *repository[T]) performCreate(ctx context.Context, model *T) error {
+	// Get model fields and values
+	fields, values, err := r.getModelFieldsAndValues(model)
+	if err != nil {
+		return fmt.Errorf("failed to get model fields: %w", err)
+	}
+
+	// Build INSERT query
+	placeholders := strings.Repeat("?,", len(fields))
+	placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", r.tableName, strings.Join(fields, ", "), placeholders)
+
+	// Get statement from cache
+	stmt, err := r.statementCache.GetStatement(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+
+	// Execute query
+	_, err = stmt.ExecContext(ctx, values...)
+	if err != nil {
+		return fmt.Errorf("failed to execute insert: %w", err)
+	}
+
+	return nil
+}
+
+// Update updates an existing model with raw SQL
+func (r *repository[T]) Update(model *T) error {
+	return r.UpdateWithContext(context.Background(), model)
+}
+
+// UpdateWithContext updates an existing model with context support
+func (r *repository[T]) UpdateWithContext(ctx context.Context, model *T) error {
+	return r.contextDecorator.WithContext(ctx, "repository.update", func(ctx context.Context) error {
+		// Check if batch processing is enabled
+		if r.batchProcessor != nil && r.batchProcessor.IsEnabled() {
+			return r.batchProcessor.AddItem(model, "update")
+		}
+
+		// Check if async processing is enabled
+		if r.asyncProcessor != nil && r.asyncProcessor.IsEnabled() {
+			return r.asyncProcessor.Process(model, "update", r.performUpdate)
+		}
+
+		// Perform synchronous update
+		return r.performUpdate(ctx, model)
+	})
+}
+
+// performUpdate performs the actual update operation with raw SQL
+func (r *repository[T]) performUpdate(ctx context.Context, model *T) error {
+	// Get model fields and values (excluding ID)
+	fields, values, err := r.getModelFieldsAndValues(model)
+	if err != nil {
+		return fmt.Errorf("failed to get model fields: %w", err)
+	}
+
+	// Get ID field
+	idValue, err := r.getModelID(model)
+	if err != nil {
+		return fmt.Errorf("failed to get model ID: %w", err)
+	}
+
+	// Build UPDATE query
+	setClause := make([]string, len(fields))
+	for i, field := range fields {
+		setClause[i] = fmt.Sprintf("%s = ?", field)
+	}
+
+	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ? AND deleted_at IS NULL",
+		r.tableName, strings.Join(setClause, ", "))
+
+	// Add ID to values
+	values = append(values, idValue)
+
+	// Get statement from cache
+	stmt, err := r.statementCache.GetStatement(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+
+	// Execute query
+	result, err := stmt.ExecContext(ctx, values...)
+	if err != nil {
+		return fmt.Errorf("failed to execute update: %w", err)
+	}
+
+	// Check if any rows were affected
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows affected - record may not exist")
+	}
+
+	return nil
+}
+
+// Delete deletes a model with raw SQL (soft delete)
+func (r *repository[T]) Delete(id uint) error {
+	return r.DeleteWithContext(context.Background(), id)
+}
+
+// DeleteWithContext deletes a model with context support
+func (r *repository[T]) DeleteWithContext(ctx context.Context, id uint) error {
+	return r.contextDecorator.WithContext(ctx, "repository.delete", func(ctx context.Context) error {
+		// Check if batch processing is enabled
+		if r.batchProcessor != nil && r.batchProcessor.IsEnabled() {
+			// Create a dummy model for batch processing
+			var model T
+			if err := r.setModelID(&model, id); err != nil {
+				return fmt.Errorf("failed to set model ID: %w", err)
 			}
-			result = optimized
+			return r.batchProcessor.AddItem(&model, "delete")
+		}
+
+		// Perform synchronous delete
+		return r.performDelete(ctx, id)
+	})
+}
+
+// performDelete performs the actual delete operation with raw SQL
+func (r *repository[T]) performDelete(ctx context.Context, id uint) error {
+	// Soft delete - set deleted_at timestamp
+	query := fmt.Sprintf("UPDATE %s SET deleted_at = NOW() WHERE id = ? AND deleted_at IS NULL", r.tableName)
+
+	// Get statement from cache
+	stmt, err := r.statementCache.GetStatement(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+
+	// Execute query
+	result, err := stmt.ExecContext(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to execute delete: %w", err)
+	}
+
+	// Check if any rows were affected
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows affected - record may not exist")
+	}
+
+	return nil
+}
+
+// Where creates a query builder with conditions
+func (r *repository[T]) Where(conditions map[string]any) Query[T] {
+	return r.WhereWithContext(context.Background(), conditions)
+}
+
+// WhereWithContext creates a query builder with conditions and context
+func (r *repository[T]) WhereWithContext(ctx context.Context, conditions map[string]any) Query[T] {
+	// Validate all field names
+	for field := range conditions {
+		if err := r.fieldValidator.ValidateField(field); err != nil {
+			// Return error query that will fail on execution
+			return &errorQuery[T]{err: fmt.Errorf("invalid field name '%s': %w", field, err)}
+		}
+	}
+
+	return &queryBuilder[T]{
+		repository: r,
+		conditions: conditions,
+		ctx:        ctx,
+	}
+}
+
+// WhereRaw creates a query builder with raw SQL
+func (r *repository[T]) WhereRaw(query string, args ...any) Query[T] {
+	return r.WhereRawWithContext(context.Background(), query, args...)
+}
+
+// WhereRawWithContext creates a query builder with raw SQL and context
+func (r *repository[T]) WhereRawWithContext(ctx context.Context, query string, args ...any) Query[T] {
+	// Validate SQL query to prevent injection
+	if err := r.sqlValidator.ValidateQuery(query); err != nil {
+		return &errorQuery[T]{err: fmt.Errorf("invalid SQL query: %w", err)}
+	}
+
+	return &rawQueryBuilder[T]{
+		repository: r,
+		query:      query,
+		args:       args,
+		ctx:        ctx,
+	}
+}
+
+// Transaction executes a function within a database transaction
+func (r *repository[T]) Transaction(fn func(Repository[T]) error) error {
+	return r.TransactionWithContext(context.Background(), fn)
+}
+
+// TransactionWithContext executes a function within a database transaction with context
+func (r *repository[T]) TransactionWithContext(ctx context.Context, fn func(Repository[T]) error) error {
+	return r.performanceFacade.Track("repository.transaction", func() error {
+		// Begin transaction
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+
+		// Create transaction repository
+		txRepo := &repository[T]{
+			db:                 r.db,
+			connectionPool:     r.connectionPool,
+			statementCache:     r.statementCache,
+			performanceFacade:  r.performanceFacade,
+			atomicCounter:      r.atomicCounter,
+			optimizationEngine: r.optimizationEngine,
+			workStealingPool:   r.workStealingPool,
+			customAllocator:    r.customAllocator,
+			profileOptimizer:   r.profileOptimizer,
+			batchProcessor:     r.batchProcessor,
+			asyncProcessor:     r.asyncProcessor,
+			pipelineProcessor:  r.pipelineProcessor,
+			contextDecorator:   r.contextDecorator,
+			tableName:          r.tableName,
+			fieldValidator:     r.fieldValidator,
+			sqlValidator:       r.sqlValidator,
+			config:             r.config,
+		}
+
+		// Execute function
+		if err := fn(txRepo); err != nil {
+			// Rollback on error
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				return fmt.Errorf("transaction failed and rollback failed: %w (rollback error: %v)", err, rollbackErr)
+			}
+			return err
+		}
+
+		// Commit transaction
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 
 		return nil
 	})
-	return result, err
 }
 
-// processWithWorkStealing processes results using work stealing pool with context
+// WithContext returns a new repository with the given context
+func (r *repository[T]) WithContext(ctx context.Context) Repository[T] {
+	return &repository[T]{
+		db:                 r.db,
+		connectionPool:     r.connectionPool,
+		statementCache:     r.statementCache,
+		performanceFacade:  r.performanceFacade,
+		atomicCounter:      r.atomicCounter,
+		optimizationEngine: r.optimizationEngine,
+		workStealingPool:   r.workStealingPool,
+		customAllocator:    r.customAllocator,
+		profileOptimizer:   r.profileOptimizer,
+		batchProcessor:     r.batchProcessor,
+		asyncProcessor:     r.asyncProcessor,
+		pipelineProcessor:  r.pipelineProcessor,
+		contextDecorator:   r.contextDecorator,
+		tableName:          r.tableName,
+		fieldValidator:     r.fieldValidator,
+		sqlValidator:       r.sqlValidator,
+		config:             r.config,
+	}
+}
+
+// Exists checks if a model exists
+func (r *repository[T]) Exists(id uint) (bool, error) {
+	return r.ExistsWithContext(context.Background(), id)
+}
+
+// ExistsWithContext checks if a model exists with context
+func (r *repository[T]) ExistsWithContext(ctx context.Context, id uint) (bool, error) {
+	r.atomicCounter.Increment()
+
+	var exists bool
+	err := r.performanceFacade.Track("repository.exists", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Build safe query
+		query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE id = ? AND deleted_at IS NULL)", r.tableName)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+
+		// Execute query
+		row := stmt.QueryRowContext(ctx, id)
+		if err := row.Scan(&exists); err != nil {
+			return fmt.Errorf("failed to scan exists result: %w", err)
+		}
+
+		return nil
+	})
+
+	return exists, err
+}
+
+// Count returns the total number of records
+func (r *repository[T]) Count() (int64, error) {
+	return r.CountWithContext(context.Background())
+}
+
+// CountWithContext returns the total number of records with context
+func (r *repository[T]) CountWithContext(ctx context.Context) (int64, error) {
+	r.atomicCounter.Increment()
+
+	var count int64
+	err := r.performanceFacade.Track("repository.count", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Build safe query
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE deleted_at IS NULL", r.tableName)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+
+		// Execute query
+		row := stmt.QueryRowContext(ctx)
+		if err := row.Scan(&count); err != nil {
+			return fmt.Errorf("failed to scan count result: %w", err)
+		}
+
+		return nil
+	})
+
+	return count, err
+}
+
+// CountWhere returns the count with conditions
+func (r *repository[T]) CountWhere(conditions map[string]any) (int64, error) {
+	return r.CountWhereWithContext(context.Background(), conditions)
+}
+
+// CountWhereWithContext returns the count with conditions and context
+func (r *repository[T]) CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error) {
+	r.atomicCounter.Increment()
+
+	// Validate all field names
+	for field := range conditions {
+		if err := r.fieldValidator.ValidateField(field); err != nil {
+			return 0, fmt.Errorf("invalid field name '%s': %w", field, err)
+		}
+	}
+
+	var count int64
+	err := r.performanceFacade.Track("repository.count_where", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Build WHERE clause
+		whereClause, values := r.buildWhereClause(conditions)
+
+		// Build safe query
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s AND deleted_at IS NULL", r.tableName, whereClause)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+
+		// Execute query
+		row := stmt.QueryRowContext(ctx, values...)
+		if err := row.Scan(&count); err != nil {
+			return fmt.Errorf("failed to scan count result: %w", err)
+		}
+
+		return nil
+	})
+
+	return count, err
+}
+
+// GetPerformanceStats returns performance statistics
+func (r *repository[T]) GetPerformanceStats() map[string]interface{} {
+	return r.performanceFacade.GetStats()
+}
+
+// GetOptimizationStats returns optimization statistics
+func (r *repository[T]) GetOptimizationStats() map[string]interface{} {
+	stats := make(map[string]interface{})
+
+	// Add atomic counter stats
+	stats["operations_count"] = r.atomicCounter.Get()
+
+	// Add optimization engine stats
+	if r.optimizationEngine != nil {
+		stats["optimization_engine"] = map[string]interface{}{
+			"strategies_count": len(r.optimizationEngine.strategies),
+		}
+	}
+
+	// Add work stealing pool stats
+	if r.workStealingPool != nil {
+		stats["work_stealing_pool"] = r.workStealingPool.GetMetrics()
+	}
+
+	// Add batch processor stats
+	if r.batchProcessor != nil {
+		stats["batch_processor"] = r.batchProcessor.GetStats()
+	}
+
+	// Add async processor stats
+	if r.asyncProcessor != nil {
+		stats["async_processor"] = r.asyncProcessor.GetStats()
+	}
+
+	// Add pipeline processor stats
+	if r.pipelineProcessor != nil {
+		stats["pipeline_processor"] = r.pipelineProcessor.GetStats()
+	}
+
+	// Add connection pool stats
+	if r.connectionPool != nil {
+		stats["connection_pool"] = r.connectionPool.GetStats()
+	}
+
+	// Add statement cache stats
+	if r.statementCache != nil {
+		stats["statement_cache"] = r.statementCache.GetStats()
+	}
+
+	return stats
+}
+
+// Bulk operations for complex scenarios
+func (r *repository[T]) BulkCreate(models []*T) error {
+	return r.BulkCreateWithContext(context.Background(), models)
+}
+
+func (r *repository[T]) BulkCreateWithContext(ctx context.Context, models []*T) error {
+	if len(models) == 0 {
+		return nil
+	}
+
+	return r.performanceFacade.Track("repository.bulk_create", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Get fields from first model
+		fields, _, err := r.getModelFieldsAndValues(models[0])
+		if err != nil {
+			return fmt.Errorf("failed to get model fields: %w", err)
+		}
+
+		// Build bulk INSERT query
+		placeholders := strings.Repeat("?,", len(fields))
+		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+
+		valuesClause := strings.Repeat(fmt.Sprintf("(%s),", placeholders), len(models))
+		valuesClause = valuesClause[:len(valuesClause)-1] // Remove trailing comma
+
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s", r.tableName, strings.Join(fields, ", "), valuesClause)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+
+		// Prepare all values
+		var allValues []interface{}
+		for _, model := range models {
+			_, values, err := r.getModelFieldsAndValues(model)
+			if err != nil {
+				return fmt.Errorf("failed to get model values: %w", err)
+			}
+			allValues = append(allValues, values...)
+		}
+
+		// Execute bulk insert
+		_, err = stmt.ExecContext(ctx, allValues...)
+		if err != nil {
+			return fmt.Errorf("failed to execute bulk insert: %w", err)
+		}
+
+		return nil
+	})
+}
+
+func (r *repository[T]) BulkUpdate(models []*T) error {
+	return r.BulkUpdateWithContext(context.Background(), models)
+}
+
+func (r *repository[T]) BulkUpdateWithContext(ctx context.Context, models []*T) error {
+	if len(models) == 0 {
+		return nil
+	}
+
+	return r.performanceFacade.Track("repository.bulk_update", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// For bulk update, we'll use a transaction and update each model individually
+		// This is more complex than bulk insert due to different WHERE clauses
+		return r.TransactionWithContext(ctx, func(repo Repository[T]) error {
+			for _, model := range models {
+				if err := repo.UpdateWithContext(ctx, model); err != nil {
+					return fmt.Errorf("failed to update model in bulk: %w", err)
+				}
+			}
+			return nil
+		})
+	})
+}
+
+func (r *repository[T]) BulkDelete(ids []uint) error {
+	return r.BulkDeleteWithContext(context.Background(), ids)
+}
+
+func (r *repository[T]) BulkDeleteWithContext(ctx context.Context, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	return r.performanceFacade.Track("repository.bulk_delete", func() error {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Build bulk DELETE query
+		placeholders := strings.Repeat("?,", len(ids))
+		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+
+		query := fmt.Sprintf("UPDATE %s SET deleted_at = NOW() WHERE id IN (%s) AND deleted_at IS NULL", r.tableName, placeholders)
+
+		// Get statement from cache
+		stmt, err := r.statementCache.GetStatement(ctx, query)
+		if err != nil {
+			return fmt.Errorf("failed to prepare statement: %w", err)
+		}
+
+		// Convert ids to interface slice
+		args := make([]interface{}, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+
+		// Execute bulk delete
+		_, err = stmt.ExecContext(ctx, args...)
+		if err != nil {
+			return fmt.Errorf("failed to execute bulk delete: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// Helper methods for model manipulation
+func (r *repository[T]) getModelFieldsAndValues(model *T) ([]string, []interface{}, error) {
+	// Use reflection to get field names and values
+	v := reflect.ValueOf(model).Elem()
+	t := v.Type()
+
+	var fields []string
+	var values []interface{}
+
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		// Skip ID field for inserts, skip deleted_at
+		if field.Name == "ID" || field.Name == "DeletedAt" {
+			continue
+		}
+
+		// Get field name from JSON tag or use field name
+		jsonTag := field.Tag.Get("json")
+		if jsonTag != "" && jsonTag != "-" {
+			fields = append(fields, jsonTag)
+		} else {
+			fields = append(fields, strings.ToLower(field.Name))
+		}
+
+		values = append(values, value.Interface())
+	}
+
+	return fields, values, nil
+}
+
+func (r *repository[T]) getModelID(model *T) (interface{}, error) {
+	v := reflect.ValueOf(model).Elem()
+	idField := v.FieldByName("ID")
+	if !idField.IsValid() {
+		return nil, fmt.Errorf("model does not have ID field")
+	}
+	return idField.Interface(), nil
+}
+
+func (r *repository[T]) setModelID(model *T, id uint) error {
+	v := reflect.ValueOf(model).Elem()
+	idField := v.FieldByName("ID")
+	if !idField.IsValid() {
+		return fmt.Errorf("model does not have ID field")
+	}
+	if !idField.CanSet() {
+		return fmt.Errorf("ID field cannot be set")
+	}
+	idField.SetUint(uint64(id))
+	return nil
+}
+
+func (r *repository[T]) scanRowToStruct(scanner interface{}, model *T) error {
+	// Use reflection to scan row into model
+	v := reflect.ValueOf(model).Elem()
+	t := v.Type()
+
+	// Get column names from database
+	var columns []string
+	if rows, ok := scanner.(*sql.Rows); ok {
+		var err error
+		columns, err = rows.Columns()
+		if err != nil {
+			return fmt.Errorf("failed to get columns: %w", err)
+		}
+	} else {
+		// For single row, we need to get columns differently
+		// This is a simplified version - in practice you'd need more sophisticated column detection
+		return fmt.Errorf("unsupported scanner type for scanning")
+	}
+
+	// Create values slice for scanning
+	values := make([]interface{}, len(columns))
+	valuePtrs := make([]interface{}, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+
+	// Scan the row
+	if err := scanner.(*sql.Rows).Scan(valuePtrs...); err != nil {
+		return fmt.Errorf("failed to scan row: %w", err)
+	}
+
+	// Map values to struct fields
+	for i, column := range columns {
+		// Find matching field in struct
+		for j := 0; j < v.NumField(); j++ {
+			field := t.Field(j)
+			jsonTag := field.Tag.Get("json")
+
+			if jsonTag == column || strings.ToLower(field.Name) == column {
+				fieldValue := v.Field(j)
+				if fieldValue.CanSet() {
+					// Convert value to field type
+					if err := r.convertValue(values[i], fieldValue); err != nil {
+						return fmt.Errorf("failed to convert value for field %s: %w", field.Name, err)
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *repository[T]) convertValue(value interface{}, field reflect.Value) error {
+	// Convert database value to field type
+	// This is a simplified version - in practice you'd need more sophisticated type conversion
+	switch v := value.(type) {
+	case []byte:
+		// Handle JSON fields
+		if field.Type() == reflect.TypeOf(json.RawMessage{}) {
+			field.Set(reflect.ValueOf(json.RawMessage(v)))
+		} else {
+			field.SetString(string(v))
+		}
+	case string:
+		field.SetString(v)
+	case int64:
+		field.SetInt(v)
+	case float64:
+		field.SetFloat(v)
+	case bool:
+		field.SetBool(v)
+	case time.Time:
+		field.Set(reflect.ValueOf(v))
+	case nil:
+		// Handle NULL values
+		field.Set(reflect.Zero(field.Type()))
+	default:
+		field.Set(reflect.ValueOf(v))
+	}
+	return nil
+}
+
+func (r *repository[T]) buildWhereClause(conditions map[string]any) (string, []interface{}) {
+	var clauses []string
+	var values []interface{}
+
+	for field, value := range conditions {
+		clauses = append(clauses, fmt.Sprintf("%s = ?", field))
+		values = append(values, value)
+	}
+
+	return strings.Join(clauses, " AND "), values
+}
+
 func (r *repository[T]) processWithWorkStealing(ctx context.Context, results []T) error {
-	// Use custom allocator for work items if available
+	// Use work stealing pool for processing large datasets
 	workItems := make([]WorkItem[any], len(results))
 	for i, result := range results {
 		// Check for context cancellation
@@ -294,10 +1109,6 @@ func (r *repository[T]) processWithWorkStealing(ctx context.Context, results []T
 			return ctx.Err()
 		default:
 		}
-
-		// Allocate work item using custom allocator if available
-		workItem := r.allocate()
-		defer r.deallocate(workItem)
 
 		workItems[i] = WorkItem[any]{
 			ID:      fmt.Sprintf("process_%d", i),
@@ -324,796 +1135,12 @@ func (r *repository[T]) processWithWorkStealing(ctx context.Context, results []T
 	return nil
 }
 
-// processResult processes a single result item
 func (r *repository[T]) processResult(ctx context.Context, data any) error {
 	// Process the result item (e.g., apply transformations, validations, etc.)
 	// This is a placeholder for actual processing logic
 	return nil
 }
 
-// Create saves a new model with performance tracking and dynamic optimization
-func (r *repository[T]) Create(model *T) error {
-	return r.CreateWithContext(context.Background(), model)
-}
-
-// CreateWithContext saves a new model with context support
-func (r *repository[T]) CreateWithContext(ctx context.Context, model *T) error {
-	// Use context decorator for performance tracking and context management
-	return r.contextDecorator.WithContext(ctx, "repository.create", func(ctx context.Context) error {
-		// Check if batch processing is enabled
-		if r.batchProcessor != nil && r.batchProcessor.IsEnabled() {
-			return r.batchProcessor.AddItem(model, "create")
-		}
-
-		// Check if async processing is enabled
-		if r.asyncProcessor != nil && r.asyncProcessor.IsEnabled() {
-			return r.asyncProcessor.Process(model, "create", func(ctx context.Context, m *T) error {
-				return r.performCreate(ctx, m)
-			})
-		}
-
-		// Fall back to direct operation
-		return r.performCreate(ctx, model)
-	})
-}
-
-// performCreate performs the actual create operation
-func (r *repository[T]) performCreate(ctx context.Context, model *T) error {
-	return r.performanceFacade.Track("repository.create", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Apply dynamic optimization to the model
-		if err := r.performanceFacade.Optimize(model); err != nil {
-			// Log optimization error but continue with creation
-			// log.Printf("Optimization failed for model: %v", err)
-		}
-
-		return r.db.WithContext(ctx).Create(model).Error
-	})
-}
-
-// Update saves an existing model with performance tracking and dynamic optimization
-func (r *repository[T]) Update(model *T) error {
-	return r.UpdateWithContext(context.Background(), model)
-}
-
-// UpdateWithContext saves an existing model with context support
-func (r *repository[T]) UpdateWithContext(ctx context.Context, model *T) error {
-	// Track operation count atomically
-	r.atomicCounter.Increment()
-
-	return r.performanceFacade.Track("repository.update", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Apply dynamic optimization to the model before update
-		if err := r.performanceFacade.Optimize(model); err != nil {
-			// Log optimization error but continue with update
-			// log.Printf("Optimization failed for model: %v", err)
-		}
-
-		return r.db.WithContext(ctx).Save(model).Error
-	})
-}
-
-// Delete removes a model by ID with performance tracking and atomic counter
-func (r *repository[T]) Delete(id uint) error {
-	return r.DeleteWithContext(context.Background(), id)
-}
-
-// DeleteWithContext removes a model by ID with context support
-func (r *repository[T]) DeleteWithContext(ctx context.Context, id uint) error {
-	// Track operation count atomically
-	r.atomicCounter.Increment()
-
-	return r.performanceFacade.Track("repository.delete", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		var model T
-		return r.db.WithContext(ctx).Delete(&model, id).Error
-	})
-}
-
-// GetPerformanceStats returns repository performance statistics
-func (r *repository[T]) GetPerformanceStats() map[string]interface{} {
-	stats := r.performanceFacade.GetStats()
-
-	// Add repository-specific stats
-	stats["repository"] = map[string]interface{}{
-		"operations_count": r.atomicCounter.Get(),
-		"object_pool_size": len(r.objectPool.pool),
-	}
-
-	// Add infrastructure optimization stats
-	if r.batchProcessor != nil {
-		stats["batch_processor"] = r.batchProcessor.GetStats()
-	}
-	if r.asyncProcessor != nil {
-		stats["async_processor"] = r.asyncProcessor.GetStats()
-	}
-	if r.pipelineProcessor != nil {
-		stats["pipeline_processor"] = r.pipelineProcessor.GetStats()
-	}
-	if r.connectionPool != nil {
-		stats["connection_pool"] = r.connectionPool.GetStats()
-	}
-	if r.contextDecorator != nil {
-		stats["context_decorator"] = r.contextDecorator.GetPerformanceStats()
-	}
-
-	return stats
-}
-
-// GetOptimizationStats returns optimization statistics
-func (r *repository[T]) GetOptimizationStats() map[string]interface{} {
-	return map[string]interface{}{
-		"atomic_operations":              r.atomicCounter.Get(),
-		"object_pool_usage":              len(r.objectPool.pool),
-		"optimization_engine_strategies": len(r.optimizationEngine.strategies),
-		"work_stealing":                  r.workStealingPool != nil,
-		"custom_allocator":               r.customAllocator != nil,
-		"profile_optimizer":              r.profileOptimizer != nil,
-		"batch_processing_enabled":       r.batchProcessor != nil && r.batchProcessor.IsEnabled(),
-		"async_operations_enabled":       r.asyncProcessor != nil && r.asyncProcessor.IsEnabled(),
-		"pipeline_operations_enabled":    r.pipelineProcessor != nil && r.pipelineProcessor.IsEnabled(),
-		"connection_pooling_enabled":     r.connectionPool != nil && r.connectionPool.IsEnabled(),
-		"infrastructure_optimizations":   true,
-	}
-}
-
-// Where creates a query with conditions
-func (r *repository[T]) Where(conditions map[string]any) Query[T] {
-	return r.WhereWithContext(context.Background(), conditions)
-}
-
-// WhereWithContext creates a query with conditions and context
-func (r *repository[T]) WhereWithContext(ctx context.Context, conditions map[string]any) Query[T] {
-	query := r.db.WithContext(ctx)
-	for field, value := range conditions {
-		query = query.Where(field+" = ?", value)
-	}
-	return &queryBuilder[T]{
-		db:                query,
-		performanceFacade: r.performanceFacade,
-		objectPool:        r.objectPool,
-		atomicCounter:     r.atomicCounter,
-	}
-}
-
-// WhereRaw creates a query with raw SQL
-func (r *repository[T]) WhereRaw(query string, args ...any) Query[T] {
-	return r.WhereRawWithContext(context.Background(), query, args...)
-}
-
-// WhereRawWithContext creates a query with raw SQL and context
-func (r *repository[T]) WhereRawWithContext(ctx context.Context, query string, args ...any) Query[T] {
-	return &queryBuilder[T]{
-		db:                r.db.WithContext(ctx).Where(query, args...),
-		performanceFacade: r.performanceFacade,
-		objectPool:        r.objectPool,
-		atomicCounter:     r.atomicCounter,
-	}
-}
-
-// Transaction executes a function within a database transaction
-func (r *repository[T]) Transaction(fn func(Repository[T]) error) error {
-	return r.TransactionWithContext(context.Background(), fn)
-}
-
-// TransactionWithContext executes a function within a database transaction with context
-func (r *repository[T]) TransactionWithContext(ctx context.Context, fn func(Repository[T]) error) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		txRepo := &repository[T]{
-			db:                 tx,
-			performanceFacade:  r.performanceFacade,
-			objectPool:         r.objectPool,
-			atomicCounter:      r.atomicCounter,
-			optimizationEngine: r.optimizationEngine,
-			workStealingPool:   r.workStealingPool,
-			customAllocator:    r.customAllocator,
-			profileOptimizer:   r.profileOptimizer,
-		}
-		return fn(txRepo)
-	})
-}
-
-// WithContext returns a repository with context
-func (r *repository[T]) WithContext(ctx context.Context) Repository[T] {
-	return &repository[T]{
-		db:                 r.db.WithContext(ctx),
-		performanceFacade:  r.performanceFacade,
-		objectPool:         r.objectPool,
-		atomicCounter:      r.atomicCounter,
-		optimizationEngine: r.optimizationEngine,
-		workStealingPool:   r.workStealingPool,
-		customAllocator:    r.customAllocator,
-		profileOptimizer:   r.profileOptimizer,
-	}
-}
-
-// Exists checks if a model exists by ID with performance tracking and atomic counter
-func (r *repository[T]) Exists(id uint) (bool, error) {
-	return r.ExistsWithContext(context.Background(), id)
-}
-
-// ExistsWithContext checks if a model exists by ID with context support
-func (r *repository[T]) ExistsWithContext(ctx context.Context, id uint) (bool, error) {
-	// Track operation count atomically
-	r.atomicCounter.Increment()
-
-	var result bool
-	err := r.performanceFacade.Track("repository.exists", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		var count int64
-		if err := r.db.WithContext(ctx).Model(new(T)).Where("id = ?", id).Count(&count).Error; err != nil {
-			return err
-		}
-		result = count > 0
-		return nil
-	})
-	return result, err
-}
-
-// Count returns the total number of models with performance tracking and atomic counter
-func (r *repository[T]) Count() (int64, error) {
-	return r.CountWithContext(context.Background())
-}
-
-// CountWithContext returns the total number of models with context support
-func (r *repository[T]) CountWithContext(ctx context.Context) (int64, error) {
-	// Track operation count atomically
-	r.atomicCounter.Increment()
-
-	var result int64
-	err := r.performanceFacade.Track("repository.count", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err := r.db.WithContext(ctx).Model(new(T)).Count(&result).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-	return result, err
-}
-
-// CountWhere returns the count with conditions with performance tracking and atomic counter
-func (r *repository[T]) CountWhere(conditions map[string]any) (int64, error) {
-	return r.CountWhereWithContext(context.Background(), conditions)
-}
-
-// CountWhereWithContext returns the count with conditions and context support
-func (r *repository[T]) CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error) {
-	// Track operation count atomically
-	r.atomicCounter.Increment()
-
-	var result int64
-	err := r.performanceFacade.Track("repository.count_where", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		query := r.db.WithContext(ctx).Model(new(T))
-		for field, value := range conditions {
-			query = query.Where(field+" = ?", value)
-		}
-		if err := query.Count(&result).Error; err != nil {
-			return err
-		}
-		return nil
-	})
-	return result, err
-}
-
-// queryBuilder implements Query[T] with GORM and performance optimizations
-type queryBuilder[T any] struct {
-	db                *gorm.DB
-	performanceFacade *PerformanceFacade
-	objectPool        *ObjectPool[T]
-	atomicCounter     *AtomicCounter
-}
-
-// Get retrieves all matching models with performance tracking and pipeline optimization
-func (q *queryBuilder[T]) Get() ([]T, error) {
-	return q.GetWithContext(context.Background())
-}
-
-// GetWithContext retrieves all matching models with context support
-func (q *queryBuilder[T]) GetWithContext(ctx context.Context) ([]T, error) {
-	// Track operation count atomically
-	if q.atomicCounter != nil {
-		q.atomicCounter.Increment()
-	}
-
-	var result []T
-	err := q.performanceFacade.Track("query.get", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err := q.db.Find(&result).Error; err != nil {
-			return err
-		}
-
-		// Use channel-based pipeline for processing large datasets
-		if len(result) > 100 { // Only use pipeline for larger datasets
-			pipeline := NewPipeline[T]()
-			processed := pipeline.Execute(result)
-
-			// Collect results
-			optimized := make([]T, 0, len(result))
-			for item := range processed {
-				// Check for context cancellation during processing
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				optimized = append(optimized, item)
-			}
-			result = optimized
-		}
-
-		return nil
-	})
-	return result, err
-}
-
-// First retrieves the first matching model with performance tracking and atomic counter
-func (q *queryBuilder[T]) First() (*T, error) {
-	return q.FirstWithContext(context.Background())
-}
-
-// FirstWithContext retrieves the first matching model with context support
-func (q *queryBuilder[T]) FirstWithContext(ctx context.Context) (*T, error) {
-	// Track operation count atomically
-	if q.atomicCounter != nil {
-		q.atomicCounter.Increment()
-	}
-
-	var result *T
-	err := q.performanceFacade.Track("query.first", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Create fresh entity for database operation (avoid concurrency issues)
-		var entity T
-		if err := q.db.First(&entity).Error; err != nil {
-			return err
-		}
-		result = &entity
-		return nil
-	})
-	return result, err
-}
-
-// Paginate retrieves models with pagination with performance tracking and pipeline optimization
-func (q *queryBuilder[T]) Paginate(page, perPage int) ([]T, int64, error) {
-	return q.PaginateWithContext(context.Background(), page, perPage)
-}
-
-// PaginateWithContext retrieves models with pagination and context support
-func (q *queryBuilder[T]) PaginateWithContext(ctx context.Context, page, perPage int) ([]T, int64, error) {
-	// Validate pagination parameters
-	if page <= 0 {
-		return nil, 0, fmt.Errorf("page must be greater than 0, got %d", page)
-	}
-	if perPage <= 0 {
-		return nil, 0, fmt.Errorf("perPage must be greater than 0, got %d", perPage)
-	}
-
-	// Track operation count atomically
-	if q.atomicCounter != nil {
-		q.atomicCounter.Increment()
-	}
-
-	var result []T
-	var total int64
-
-	err := q.performanceFacade.Track("query.paginate", func() error {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Count total
-		if err := q.db.Model(new(T)).Count(&total).Error; err != nil {
-			return err
-		}
-
-		// Get paginated results
-		offset := (page - 1) * perPage
-		if err := q.db.Offset(offset).Limit(perPage).Find(&result).Error; err != nil {
-			return err
-		}
-
-		// Use channel-based pipeline for processing large datasets
-		if len(result) > 100 { // Only use pipeline for larger datasets
-			pipeline := NewPipeline[T]()
-			processed := pipeline.Execute(result)
-
-			// Collect results
-			optimized := make([]T, 0, len(result))
-			for item := range processed {
-				// Check for context cancellation during processing
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				optimized = append(optimized, item)
-			}
-			result = optimized
-		}
-
-		return nil
-	})
-
-	return result, total, err
-}
-
-// Where adds a where clause
-func (q *queryBuilder[T]) Where(field string, operator string, value any) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Where(field+" "+operator+" ?", value),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// WhereIn adds a where in clause
-func (q *queryBuilder[T]) WhereIn(field string, values []any) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Where(field+" IN ?", values),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// OrderBy adds an order clause
-func (q *queryBuilder[T]) OrderBy(field string, direction string) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Order(field + " " + direction),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// Limit adds a limit clause
-func (q *queryBuilder[T]) Limit(limit int) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Limit(limit),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// Offset adds an offset clause
-func (q *queryBuilder[T]) Offset(offset int) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Offset(offset),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// Preload adds a preload clause
-func (q *queryBuilder[T]) Preload(relation string) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.Preload(relation),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// WithContext returns a query with context
-func (q *queryBuilder[T]) WithContext(ctx context.Context) Query[T] {
-	return &queryBuilder[T]{
-		db:                q.db.WithContext(ctx),
-		performanceFacade: q.performanceFacade,
-		objectPool:        q.objectPool,
-		atomicCounter:     q.atomicCounter,
-	}
-}
-
-// ============================================================================
-// REPOSITORY INFRASTRUCTURE PROCESSORS
-// ============================================================================
-
-// RepositoryBatchProcessor handles batch operations for repository
-type RepositoryBatchProcessor[T any] struct {
-	enabled     bool
-	batchSize   int
-	batchBuffer []*RepositoryBatchItem[T]
-	bufferMutex sync.Mutex
-	flushTicker *time.Ticker
-	done        chan bool
-	config      map[string]interface{}
-}
-
-type RepositoryBatchItem[T any] struct {
-	Model *T
-	Op    string // "create", "update", "delete"
-}
-
-// NewRepositoryBatchProcessor creates a new repository batch processor
-func NewRepositoryBatchProcessor[T any](config map[string]interface{}) *RepositoryBatchProcessor[T] {
-	batchSize := 100 // Default
-	if size, ok := config["repository_batch_size"].(int); ok {
-		batchSize = size
-	}
-
-	return &RepositoryBatchProcessor[T]{
-		enabled:     true,
-		batchSize:   batchSize,
-		batchBuffer: make([]*RepositoryBatchItem[T], 0),
-		done:        make(chan bool),
-		config:      config,
-	}
-}
-
-// Start starts the batch processor
-func (rbp *RepositoryBatchProcessor[T]) Start() {
-	if !rbp.enabled {
-		return
-	}
-
-	flushInterval := 100 * time.Millisecond // Default
-	if interval, ok := rbp.config["repository_flush_interval"].(int); ok {
-		flushInterval = time.Duration(interval) * time.Millisecond
-	}
-
-	rbp.flushTicker = time.NewTicker(flushInterval)
-	go rbp.backgroundFlusher()
-}
-
-// Stop stops the batch processor
-func (rbp *RepositoryBatchProcessor[T]) Stop() {
-	if rbp.flushTicker != nil {
-		rbp.flushTicker.Stop()
-	}
-	close(rbp.done)
-	rbp.flushBuffer()
-}
-
-// backgroundFlusher runs the background flush process
-func (rbp *RepositoryBatchProcessor[T]) backgroundFlusher() {
-	for {
-		select {
-		case <-rbp.flushTicker.C:
-			rbp.flushBuffer()
-		case <-rbp.done:
-			return
-		}
-	}
-}
-
-// flushBuffer flushes the batch buffer
-func (rbp *RepositoryBatchProcessor[T]) flushBuffer() {
-	rbp.bufferMutex.Lock()
-	if len(rbp.batchBuffer) == 0 {
-		rbp.bufferMutex.Unlock()
-		return
-	}
-
-	items := make([]*RepositoryBatchItem[T], len(rbp.batchBuffer))
-	copy(items, rbp.batchBuffer)
-	rbp.batchBuffer = rbp.batchBuffer[:0]
-	rbp.bufferMutex.Unlock()
-
-	// Process batch
-	rbp.processBatch(items)
-}
-
-// processBatch processes a batch of repository operations
-func (rbp *RepositoryBatchProcessor[T]) processBatch(items []*RepositoryBatchItem[T]) {
-	// This would integrate with database batch operations
-	// For now, we'll just process them individually
-	for _, item := range items {
-		_ = item // Process item
-	}
-}
-
-// AddItem adds an item to batch buffer
-func (rbp *RepositoryBatchProcessor[T]) AddItem(model *T, op string) error {
-	rbp.bufferMutex.Lock()
-	defer rbp.bufferMutex.Unlock()
-
-	rbp.batchBuffer = append(rbp.batchBuffer, &RepositoryBatchItem[T]{
-		Model: model,
-		Op:    op,
-	})
-
-	// Flush if buffer is full
-	if len(rbp.batchBuffer) >= rbp.batchSize {
-		// Copy buffer and clear it
-		items := make([]*RepositoryBatchItem[T], len(rbp.batchBuffer))
-		copy(items, rbp.batchBuffer)
-		rbp.batchBuffer = rbp.batchBuffer[:0]
-
-		// Process batch in background
-		go rbp.processBatch(items)
-	}
-
-	return nil
-}
-
-// IsEnabled returns whether batch processing is enabled
-func (rbp *RepositoryBatchProcessor[T]) IsEnabled() bool {
-	return rbp.enabled
-}
-
-// GetStats returns batch processor statistics
-func (rbp *RepositoryBatchProcessor[T]) GetStats() map[string]interface{} {
-	rbp.bufferMutex.Lock()
-	defer rbp.bufferMutex.Unlock()
-
-	return map[string]interface{}{
-		"enabled":     rbp.enabled,
-		"batch_size":  rbp.batchSize,
-		"buffer_size": len(rbp.batchBuffer),
-		"config":      rbp.config,
-	}
-}
-
-// RepositoryAsyncProcessor handles async operations for repository
-type RepositoryAsyncProcessor[T any] struct {
-	enabled bool
-	config  map[string]interface{}
-}
-
-// NewRepositoryAsyncProcessor creates a new repository async processor
-func NewRepositoryAsyncProcessor[T any](config map[string]interface{}) *RepositoryAsyncProcessor[T] {
-	return &RepositoryAsyncProcessor[T]{
-		enabled: true,
-		config:  config,
-	}
-}
-
-// Start starts the async processor
-func (rap *RepositoryAsyncProcessor[T]) Start() {
-	// Start async processing
-}
-
-// Stop stops the async processor
-func (rap *RepositoryAsyncProcessor[T]) Stop() {
-	// Stop async processing
-}
-
-// Process processes a repository operation asynchronously
-func (rap *RepositoryAsyncProcessor[T]) Process(model *T, op string, processor func(context.Context, *T) error) error {
-	if !rap.enabled {
-		return processor(context.Background(), model)
-	}
-
-	// Process asynchronously
-	go func() {
-		_ = processor(context.Background(), model)
-	}()
-
-	return nil
-}
-
-// IsEnabled returns whether async processing is enabled
-func (rap *RepositoryAsyncProcessor[T]) IsEnabled() bool {
-	return rap.enabled
-}
-
-// GetStats returns async processor statistics
-func (rap *RepositoryAsyncProcessor[T]) GetStats() map[string]interface{} {
-	return map[string]interface{}{
-		"enabled": rap.enabled,
-		"config":  rap.config,
-	}
-}
-
-// RepositoryPipelineProcessor handles pipeline operations for repository
-type RepositoryPipelineProcessor struct {
-	enabled bool
-	config  map[string]interface{}
-}
-
-// NewRepositoryPipelineProcessor creates a new repository pipeline processor
-func NewRepositoryPipelineProcessor(config map[string]interface{}) *RepositoryPipelineProcessor {
-	return &RepositoryPipelineProcessor{
-		enabled: true,
-		config:  config,
-	}
-}
-
-// Start starts the pipeline processor
-func (rpp *RepositoryPipelineProcessor) Start() {
-	// Start pipeline processing
-}
-
-// Stop stops the pipeline processor
-func (rpp *RepositoryPipelineProcessor) Stop() {
-	// Stop pipeline processing
-}
-
-// IsEnabled returns whether pipeline processing is enabled
-func (rpp *RepositoryPipelineProcessor) IsEnabled() bool {
-	return rpp.enabled
-}
-
-// GetStats returns pipeline processor statistics
-func (rpp *RepositoryPipelineProcessor) GetStats() map[string]interface{} {
-	return map[string]interface{}{
-		"enabled": rpp.enabled,
-		"config":  rpp.config,
-	}
-}
-
-// RepositoryConnectionPool manages connection pooling for repository
-type RepositoryConnectionPool struct {
-	enabled bool
-	config  map[string]interface{}
-}
-
-// NewRepositoryConnectionPool creates a new repository connection pool
-func NewRepositoryConnectionPool(config map[string]interface{}) *RepositoryConnectionPool {
-	return &RepositoryConnectionPool{
-		enabled: true,
-		config:  config,
-	}
-}
-
-// IsEnabled returns whether connection pooling is enabled
-func (rcp *RepositoryConnectionPool) IsEnabled() bool {
-	return rcp.enabled
-}
-
-// GetStats returns connection pool statistics
-func (rcp *RepositoryConnectionPool) GetStats() map[string]interface{} {
-	return map[string]interface{}{
-		"enabled": rcp.enabled,
-		"config":  rcp.config,
-	}
-}
-
-// startBackgroundProcessors starts background processing for optimizations
 func (r *repository[T]) startBackgroundProcessors() {
 	// Start batch processor
 	if r.batchProcessor != nil {

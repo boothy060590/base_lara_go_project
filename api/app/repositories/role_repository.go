@@ -3,56 +3,73 @@ package repositories
 import (
 	app_core "base_lara_go_project/app/core/go_core"
 	"base_lara_go_project/app/models"
-	"time"
-
-	"gorm.io/gorm"
 )
 
+// RoleRepository provides data access for roles using canonical Repository[T] interface
 type RoleRepository struct {
-	model *app_core.BaseModel[models.Role]
+	repository app_core.Repository[models.Role]
+	cache      app_core.Cache[models.Role]
 }
 
-func NewRoleRepository(db *gorm.DB, cache app_core.Cache[models.Role], wsp any, ca any, pgo any) *RoleRepository {
-	config := app_core.ModelConfig{
-		TableName: "roles",
-		Traits: app_core.ModelTraits{
-			Cacheable:   true,
-			SoftDeletes: true,
-			Timestamps:  true,
-		},
-		CacheTTL:    30 * time.Minute,
-		CachePrefix: "role",
-	}
-
+// NewRoleRepository creates a new role repository using canonical Repository[T]
+func NewRoleRepository(repository app_core.Repository[models.Role], cache app_core.Cache[models.Role]) *RoleRepository {
 	return &RoleRepository{
-		model: app_core.NewBaseModel[models.Role](db, cache, config, wsp, ca, pgo),
+		repository: repository,
+		cache:      cache,
 	}
 }
 
+// Find retrieves a role by ID with automatic caching
 func (r *RoleRepository) Find(id uint) (*models.Role, error) {
-	return r.model.Find(id)
+	return r.repository.Find(id)
 }
 
+// FindByName retrieves a role by name
 func (r *RoleRepository) FindByName(name string) (*models.Role, error) {
-	roles, err := r.model.Where("name = ?", name).Get()
-	if err != nil || len(roles) == 0 {
+	query := r.repository.Where(map[string]any{"name": name})
+	roles, err := query.Get()
+	if err != nil {
 		return nil, err
+	}
+	if len(roles) == 0 {
+		return nil, nil
 	}
 	return &roles[0], nil
 }
 
-func (r *RoleRepository) FindAll(page, perPage int) ([]models.Role, int64, error) {
-	return r.model.Paginate(page, perPage)
-}
-
+// Create creates a new role with automatic cache invalidation
 func (r *RoleRepository) Create(role *models.Role) error {
-	return r.model.Create(role)
+	return r.repository.Create(role)
 }
 
+// Update updates an existing role with automatic cache invalidation
 func (r *RoleRepository) Update(role *models.Role) error {
-	return r.model.Update(role)
+	return r.repository.Update(role)
 }
 
+// Delete deletes a role with automatic cache invalidation
 func (r *RoleRepository) Delete(id uint) error {
-	return r.model.Delete(id)
+	return r.repository.Delete(id)
+}
+
+// FindAll retrieves all roles with pagination
+func (r *RoleRepository) FindAll(page, perPage int) ([]models.Role, int64, error) {
+	query := r.repository.Where(map[string]any{})
+	return query.Paginate(page, perPage)
+}
+
+// Count returns the total number of roles
+func (r *RoleRepository) Count() (int64, error) {
+	return r.repository.Count()
+}
+
+// Exists checks if a role exists
+func (r *RoleRepository) Exists(id uint) (bool, error) {
+	return r.repository.Exists(id)
+}
+
+// ExistsByName checks if a role exists by name
+func (r *RoleRepository) ExistsByName(name string) (bool, error) {
+	role, err := r.FindByName(name)
+	return role != nil, err
 }

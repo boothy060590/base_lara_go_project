@@ -6,6 +6,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"database/sql"
 )
 
 // ContextServiceProvider integrates context optimization with the framework
@@ -22,36 +24,45 @@ func (p *ContextServiceProvider) Register(container *app_core.Container) error {
 
 	// Register context-aware event dispatcher
 	container.Singleton("context.event_dispatcher", func() (any, error) {
-		// Get the existing event bus
-		eventBusInstance, err := container.Resolve("event_manager")
-		if err != nil {
-			// Create a new event manager if not found
-			eventBus := app_core.NewEventBus[any](nil, nil, nil)
-			eventStore := app_core.NewMemoryEventStore[any]()
-			eventManager := app_core.NewEventManager[any](eventBus, eventStore)
-			return app_core.NewEventBusWithConfig[any](nil, nil, nil, nil), nil
-		}
+		// Create canonical event bus with optimizations
+		// Get required optimization dependencies
+		wsp, _ := container.Resolve("work_stealing_pool")
+		ca, _ := container.Resolve("custom_allocator")
+		pgo, _ := container.Resolve("profile_guided_optimizer")
 
-		// Use existing event manager
-		eventManager := eventBusInstance.(app_core.EventManagerInterface[any])
-		return app_core.NewContextAwareEventDispatcher[any](eventManager), nil
+		return app_core.NewEventBus[any](
+			wsp.(*app_core.WorkStealingPool[any]),
+			ca.(*app_core.CustomAllocator[any]),
+			pgo.(*app_core.ProfileGuidedOptimizer[any]),
+		), nil
 	})
 
 	// Register context-aware job dispatcher
 	container.Singleton("context.job_dispatcher", func() (any, error) {
+		// Get required optimization dependencies
+		wsp, _ := container.Resolve("work_stealing_pool")
+		ca, _ := container.Resolve("custom_allocator")
+		pgo, _ := container.Resolve("profile_guided_optimizer")
+
 		// Get the existing queue
 		queueInstance, err := container.Resolve("queue")
 		if err != nil {
 			// If no queue exists, create a new one
 			queue := app_core.NewSyncQueue[any]()
-			jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
-			return app_core.NewContextAwareJobDispatcher[any](jobDispatcher), nil
+			return app_core.NewJobDispatcher[any](queue,
+				wsp.(*app_core.WorkStealingPool[any]),
+				ca.(*app_core.CustomAllocator[any]),
+				pgo.(*app_core.ProfileGuidedOptimizer[any]),
+			), nil
 		}
 
 		// Use existing queue
 		queue := queueInstance.(app_core.Queue[any])
-		jobDispatcher := app_core.NewJobDispatcher[any](queue, nil, nil, nil)
-		return app_core.NewContextAwareJobDispatcher[any](jobDispatcher), nil
+		return app_core.NewJobDispatcher[any](queue,
+			wsp.(*app_core.WorkStealingPool[any]),
+			ca.(*app_core.CustomAllocator[any]),
+			pgo.(*app_core.ProfileGuidedOptimizer[any]),
+		), nil
 	})
 
 	// Register context-aware repository factory
@@ -105,7 +116,7 @@ func (p *ContextServiceProvider) setupContextOptimization(container *app_core.Co
 		return err
 	}
 
-	contextDispatcher := dispatcherInstance.(*app_core.ContextAwareEventDispatcher[any])
+	contextDispatcher := dispatcherInstance.(app_core.EventDispatcher[any])
 
 	// Get the existing event manager to register listeners
 	eventManagerInstance, err := container.Resolve("event_manager")
@@ -144,24 +155,21 @@ type ContextRepositoryFactory struct {
 }
 
 // Create creates a new context-aware repository for a given model type
-func (f *ContextRepositoryFactory) Create(repository app_core.Repository[any]) *app_core.ContextAwareRepository[any] {
-	// Get the context manager
-	managerInstance, err := f.container.Resolve("context.manager")
-	if err != nil {
-		// Create a new manager if not found
-		manager := app_core.NewContextManager(app_core.DefaultContextConfig())
-		return app_core.NewContextAwareRepository(repository, manager)
-	}
-
-	// Use existing manager
-	manager := managerInstance.(*app_core.ContextManager)
-	return app_core.NewContextAwareRepository(repository, manager)
+func (f *ContextRepositoryFactory) Create(db *sql.DB) app_core.Repository[any] {
+	wsp, _ := f.container.Resolve("work_stealing_pool")
+	ca, _ := f.container.Resolve("custom_allocator")
+	pgo, _ := f.container.Resolve("profile_guided_optimizer")
+	return app_core.NewRepository[any](db,
+		wsp.(*app_core.WorkStealingPool[any]),
+		ca.(*app_core.CustomAllocator[any]),
+		pgo.(*app_core.ProfileGuidedOptimizer[any]),
+	)
 }
 
 // ContextListenerOptimizer automatically optimizes listeners with context awareness
 type ContextListenerOptimizer struct {
 	eventManager      app_core.EventManagerInterface[any]
-	contextDispatcher *app_core.ContextAwareEventDispatcher[any]
+	contextDispatcher app_core.EventDispatcher[any]
 }
 
 // OptimizeListener wraps a listener with context optimization
