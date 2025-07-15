@@ -73,10 +73,12 @@ func (p *AppServiceProvider) Boot(container *app_core.Container) error {
 	}
 
 	for _, provider := range coreProviders {
+		log.Printf("Booting core provider: %T", provider)
 		if err := provider.Boot(container); err != nil {
 			log.Printf("Failed to boot provider %T: %v", provider, err)
 			return err
 		}
+		log.Printf("Successfully booted core provider: %T", provider)
 	}
 
 	// Call the developer's custom boot method
@@ -335,7 +337,7 @@ func (p *LoggingServiceProvider) registerSingleHandler(logger *app_core.Logger[m
 
 	switch driver {
 	case "single":
-		return p.registerSingleHandler(logger, config)
+		return p.registerSingleFileHandler(logger, config)
 	case "daily":
 		return p.registerDailyHandler(logger, config)
 	case "stack":
@@ -349,6 +351,18 @@ func (p *LoggingServiceProvider) registerSingleHandler(logger *app_core.Logger[m
 	default:
 		return fmt.Errorf("unknown logging driver: %s", driver)
 	}
+}
+
+// registerSingleFileHandler registers a single file logging handler
+func (p *LoggingServiceProvider) registerSingleFileHandler(logger *app_core.Logger[map[string]interface{}], config map[string]interface{}) error {
+	path := config["path"].(string)
+	handler, err := logging_core.NewOptimizedFileHandler[map[string]interface{}](path)
+	if err != nil {
+		return fmt.Errorf("failed to create single file handler: %w", err)
+	}
+
+	logger.AddHandler("single", handler)
+	return nil
 }
 
 // registerDailyHandler registers a daily logging handler

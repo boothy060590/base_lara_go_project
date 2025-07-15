@@ -23,16 +23,18 @@ func (p *AppServiceProvider) Register(container *app_core.Container) error {
 	appProviders := []laravel_providers.ServiceProvider{
 		&laravel_providers.GoroutineServiceProvider{}, // Add goroutine optimization
 		&ListenerServiceProvider{},
-		&RepositoryServiceProvider{},
+		&RepositoryServiceProvider{}, // Re-enabled
 		&RouterServiceProvider{}, // Router with HTTP optimization built-in
 	}
 
 	// Register all application providers
 	for _, provider := range appProviders {
+		log.Printf("Registering app provider: %T", provider)
 		if err := provider.Register(container); err != nil {
 			log.Printf("Failed to register app provider %T: %v", provider, err)
 			return err
 		}
+		log.Printf("Successfully registered app provider: %T", provider)
 	}
 
 	// Register additional services that aren't full providers yet
@@ -54,15 +56,17 @@ func (p *AppServiceProvider) Boot(container *app_core.Container) error {
 	appProviders := []laravel_providers.ServiceProvider{
 		&laravel_providers.GoroutineServiceProvider{}, // Add goroutine optimization
 		&ListenerServiceProvider{},
-		&RepositoryServiceProvider{},
+		&RepositoryServiceProvider{}, // Re-enabled
 		&RouterServiceProvider{}, // Router with HTTP optimization built-in
 	}
 
 	for _, provider := range appProviders {
+		log.Printf("Booting app provider: %T", provider)
 		if err := provider.Boot(container); err != nil {
 			log.Printf("Failed to boot app provider %T: %v", provider, err)
 			return err
 		}
+		log.Printf("Successfully booted app provider: %T", provider)
 	}
 
 	log.Printf("Application service provider booted successfully")

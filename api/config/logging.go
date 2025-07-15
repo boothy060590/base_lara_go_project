@@ -13,7 +13,7 @@ func LoggingConfig() map[string]interface{} {
 		"channels": map[string]interface{}{
 			"stack": map[string]interface{}{
 				"driver":   "stack",
-				"channels": []string{"single", "daily"},
+				"channels": []interface{}{"single", "daily"},
 			},
 			"single": map[string]interface{}{
 				"driver": "single",

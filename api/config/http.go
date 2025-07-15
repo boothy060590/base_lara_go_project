@@ -1,5 +1,10 @@
 package config
 
+import (
+	go_core "base_lara_go_project/app/core/go_core"
+	"os"
+)
+
 // HTTPConfig returns HTTP optimization configuration
 func HTTPConfig() map[string]any {
 	return map[string]any{
@@ -14,8 +19,8 @@ func HTTPConfig() map[string]any {
 		
 		// Connection pooling settings
 		"http_pool": map[string]any{
-			"max_connections":     10000,
-			"max_idle_connections": 1000,
+			"max_connections":     15000, // Test value - increased from 10000
+			"max_idle_connections": 1500, // Test value - increased from 1000  
 			"connection_timeout":   5, // seconds
 		},
 		
@@ -27,10 +32,34 @@ func HTTPConfig() map[string]any {
 			"zero_copy_enabled":     true,
 		},
 		
+		// CORS settings
+		"http_cors": map[string]any{
+			"allowed_origins":    []string{getAppOrigin()},
+			"allowed_methods":    []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+			"allowed_headers":    []string{"Origin", "Content-Type", "Accept", "Authorization"},
+			"exposed_headers":    []string{"Content-Length"},
+			"allow_credentials":  true,
+			"max_age":           86400, // 24 hours
+		},
+		
 		// Monitoring settings
 		"http_monitoring": map[string]any{
 			"enable_metrics": true,
 			"metrics_path":   "/metrics",
 		},
 	}
+}
+
+// getAppOrigin returns the app origin URL based on APP_DOMAIN environment variable
+func getAppOrigin() string {
+	appDomain := os.Getenv("APP_DOMAIN")
+	if appDomain == "" {
+		appDomain = "baselaragoproject.test" // fallback
+	}
+	return "https://app." + appDomain
+}
+
+// init registers the HTTP configuration with the global config loader
+func init() {
+	go_core.RegisterGlobalConfig("http", HTTPConfig)
 }

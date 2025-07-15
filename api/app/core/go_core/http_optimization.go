@@ -32,6 +32,14 @@ type HTTPOptimizationConfig struct {
 	PreAllocatedBuffers    int           `json:"pre_allocated_buffers"`
 	ZeroCopyEnabled        bool          `json:"zero_copy_enabled"`
 	
+	// CORS configuration
+	CORSAllowedOrigins     []string      `json:"cors_allowed_origins"`
+	CORSAllowedMethods     []string      `json:"cors_allowed_methods"`
+	CORSAllowedHeaders     []string      `json:"cors_allowed_headers"`
+	CORSExposedHeaders     []string      `json:"cors_exposed_headers"`
+	CORSAllowCredentials   bool          `json:"cors_allow_credentials"`
+	CORSMaxAge            int           `json:"cors_max_age"`
+	
 	// Monitoring
 	EnableMetrics          bool          `json:"enable_metrics"`
 	MetricsPath           string        `json:"metrics_path"`
@@ -52,6 +60,13 @@ func DefaultHTTPOptimizationConfig() *HTTPOptimizationConfig {
 		EnableKeepAlive:      true,
 		PreAllocatedBuffers:  100,
 		ZeroCopyEnabled:      true,
+		// CORS defaults
+		CORSAllowedOrigins:   []string{"*"},
+		CORSAllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		CORSAllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		CORSExposedHeaders:   []string{"Content-Length"},
+		CORSAllowCredentials: true,
+		CORSMaxAge:          86400, // 24 hours
 		EnableMetrics:        true,
 		MetricsPath:          "/metrics",
 	}
@@ -91,6 +106,7 @@ type FastHTTPAdapter struct {
 	handler     http.Handler
 	bufferPool  *sync.Pool
 	metrics     *HTTPMetrics
+	config      *HTTPOptimizationConfig
 }
 
 // NewHTTPOptimizer creates a new HTTP optimizer with configuration
@@ -140,6 +156,7 @@ func (o *HTTPOptimizer) SetHandler(handler http.Handler) {
 			handler:    handler,
 			bufferPool: o.bufferPool,
 			metrics:    o.metrics,
+			config:     o.config,
 		}
 		o.fasthttpServer.Handler = o.adapter.FastHTTPHandler
 	} else {
@@ -177,6 +194,51 @@ func (o *HTTPOptimizer) ListenAndServe(addr string) error {
 	}
 
 	return fmt.Errorf("no server configured")
+}
+
+// UpdateConfig updates the HTTP optimizer configuration
+// Note: This should only be called before the server starts
+func (o *HTTPOptimizer) UpdateConfig(newConfig *HTTPOptimizationConfig) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.isRunning {
+		return fmt.Errorf("cannot update configuration while server is running")
+	}
+
+	// Update the configuration
+	o.config = newConfig
+
+	// Recreate fasthttp server with new configuration if needed
+	if newConfig.EnableFastHTTP {
+		o.fasthttpServer = &fasthttp.Server{
+			ReadTimeout:         newConfig.ReadTimeout,
+			WriteTimeout:        newConfig.WriteTimeout,
+			IdleTimeout:         newConfig.IdleTimeout,
+			MaxRequestBodySize:  newConfig.MaxRequestBodySize,
+			Concurrency:         newConfig.MaxConnections,
+			DisableKeepalive:    !newConfig.EnableKeepAlive,
+			GetOnly:            false,
+			DisablePreParseMultipartForm: true,
+		}
+
+		// If we already have an adapter, update its configuration
+		if o.adapter != nil {
+			o.fasthttpServer.Handler = o.adapter.FastHTTPHandler
+		}
+	} else {
+		// Clear fasthttp server if disabled
+		o.fasthttpServer = nil
+	}
+
+	return nil
+}
+
+// GetConfig returns the current configuration
+func (o *HTTPOptimizer) GetConfig() *HTTPOptimizationConfig {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.config
 }
 
 // Shutdown gracefully shuts down the HTTP server
@@ -222,6 +284,15 @@ func (o *HTTPOptimizer) GetMetrics() map[string]any {
 // FastHTTPHandler adapts fasthttp requests to standard http.Handler
 func (a *FastHTTPAdapter) FastHTTPHandler(ctx *fasthttp.RequestCtx) {
 	start := time.Now()
+
+	// Add CORS headers
+	a.handleCORS(ctx)
+
+	// Handle preflight requests
+	if string(ctx.Method()) == "OPTIONS" {
+		ctx.SetStatusCode(fasthttp.StatusOK)
+		return
+	}
 
 	// Update metrics
 	a.updateMetrics(func(m *HTTPMetrics) {
@@ -335,6 +406,45 @@ func (r *responseAdapter) WriteHeader(statusCode int) {
 		for _, value := range values {
 			r.ctx.Response.Header.Add(key, value)
 		}
+	}
+}
+
+// handleCORS adds CORS headers to the response
+func (a *FastHTTPAdapter) handleCORS(ctx *fasthttp.RequestCtx) {
+	// Set CORS headers from configuration
+	if len(a.config.CORSAllowedOrigins) > 0 {
+		if len(a.config.CORSAllowedOrigins) == 1 && a.config.CORSAllowedOrigins[0] == "*" {
+			ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			// Check if the request origin is in the allowed list
+			origin := string(ctx.Request.Header.Peek("Origin"))
+			for _, allowedOrigin := range a.config.CORSAllowedOrigins {
+				if origin == allowedOrigin {
+					ctx.Response.Header.Set("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		}
+	}
+	
+	if len(a.config.CORSAllowedMethods) > 0 {
+		ctx.Response.Header.Set("Access-Control-Allow-Methods", strings.Join(a.config.CORSAllowedMethods, ", "))
+	}
+	
+	if len(a.config.CORSAllowedHeaders) > 0 {
+		ctx.Response.Header.Set("Access-Control-Allow-Headers", strings.Join(a.config.CORSAllowedHeaders, ", "))
+	}
+	
+	if len(a.config.CORSExposedHeaders) > 0 {
+		ctx.Response.Header.Set("Access-Control-Expose-Headers", strings.Join(a.config.CORSExposedHeaders, ", "))
+	}
+	
+	if a.config.CORSAllowCredentials {
+		ctx.Response.Header.Set("Access-Control-Allow-Credentials", "true")
+	}
+	
+	if a.config.CORSMaxAge > 0 {
+		ctx.Response.Header.Set("Access-Control-Max-Age", fmt.Sprintf("%d", a.config.CORSMaxAge))
 	}
 }
 

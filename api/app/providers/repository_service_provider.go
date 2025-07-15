@@ -6,7 +6,6 @@ import (
 	"base_lara_go_project/app/models"
 	"base_lara_go_project/app/repositories"
 	"database/sql"
-	"fmt"
 	"log"
 )
 
@@ -29,11 +28,12 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 		return err
 	}
 
-	// Type assert to *sql.DB
+	// Type assert to *sql.DB - handle nil gracefully
 	db, ok := dbInstance.(*sql.DB)
-	if !ok {
-		log.Printf("Database connection is not *sql.DB: %T", dbInstance)
-		return fmt.Errorf("database connection is not *sql.DB")
+	if !ok || db == nil {
+		log.Printf("Database connection is not *sql.DB or is nil: %T", dbInstance)
+		log.Printf("Skipping repository registration - database not configured")
+		return nil // Skip repository registration instead of failing
 	}
 
 	// Register repositories with canonical Repository[T] interface

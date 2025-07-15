@@ -32,28 +32,44 @@ func main() {
 		panic(err)
 	}
 
-	// Try to get optimized HTTP server first, fallback to standard router
-	if httpServerInstance, err := container.Resolve("http.server"); err == nil {
-		// Use optimized HTTP server with fasthttp
-		httpServer := httpServerInstance.(*app_core.HTTPOptimizer)
-		appConfig := config.AppConfig()
-		port := appConfig["port"].(string)
-		
-		log.Printf("Starting optimized HTTP server on port %s with fasthttp", port)
-		if err := httpServer.ListenAndServe(":" + port); err != nil {
-			panic(err)
-		}
-	} else {
-		// Fallback to standard Gin router
-		log.Printf("HTTP optimizer not available, falling back to standard Gin router: %v", err)
-		
-		routerInstance, err := container.Resolve("router")
-		if err != nil {
-			panic(err)
-		}
+	log.Printf("All providers booted successfully, starting HTTP server...")
 
-		router := routerInstance.(*gin.Engine)
-		appConfig := config.AppConfig()
-		router.Run(":" + appConfig["port"].(string))
+	// Create FastHTTP server directly to avoid container resolution issues
+	log.Printf("Creating FastHTTP server directly...")
+	
+	// Get HTTP optimizer directly
+	optimizerInstance, err := container.Resolve("http.optimizer")
+	if err != nil {
+		log.Printf("HTTP optimizer not available: %v", err)
+		panic(err)
+	}
+	httpOptimizer := optimizerInstance.(*app_core.HTTPOptimizer)
+	log.Printf("HTTP optimizer resolved successfully")
+
+	// Get router directly
+	routerInstance, err := container.Resolve("router")
+	if err != nil {
+		log.Printf("Router not available: %v", err)
+		panic(err)
+	}
+	router := routerInstance.(*gin.Engine)
+	log.Printf("Router resolved successfully")
+
+	// Set router as handler
+	log.Printf("Setting router as handler for FastHTTP optimizer...")
+	httpOptimizer.SetHandler(router)
+	log.Printf("Router handler set successfully")
+
+	// Start server
+	appConfig := config.AppConfig()
+	port := appConfig["port"].(string)
+	
+	log.Printf("Starting FastHTTP server on port %s", port)
+	log.Printf("Server will be available at: http://localhost:%s", port)
+	log.Printf("Health check: http://localhost:%s/api/v1/health", port)
+	
+	if err := httpOptimizer.ListenAndServe(":" + port); err != nil {
+		log.Printf("FastHTTP server failed to start: %v", err)
+		panic(err)
 	}
 }

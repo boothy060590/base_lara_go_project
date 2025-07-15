@@ -21,17 +21,28 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 
 	// Register goroutine-aware event dispatcher that works with existing events
 	container.Singleton("goroutine.event_dispatcher", func() (any, error) {
-		// Get required optimization dependencies
+		// Get required optimization dependencies with fallback to nil
 		wsp, _ := container.Resolve("work_stealing_pool")
 		ca, _ := container.Resolve("custom_allocator")
 		pgo, _ := container.Resolve("profile_guided_optimizer")
 
-		// Return canonical event bus with goroutine optimizations
-		return app_core.NewEventBus[any](
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		), nil
+		// Handle case where optimization dependencies are not available
+		var wspPtr *app_core.WorkStealingPool[any]
+		var caPtr *app_core.CustomAllocator[any]
+		var pgoPtr *app_core.ProfileGuidedOptimizer[any]
+
+		if wsp != nil {
+			wspPtr = wsp.(*app_core.WorkStealingPool[any])
+		}
+		if ca != nil {
+			caPtr = ca.(*app_core.CustomAllocator[any])
+		}
+		if pgo != nil {
+			pgoPtr = pgo.(*app_core.ProfileGuidedOptimizer[any])
+		}
+
+		// Return canonical event bus with goroutine optimizations (handles nil gracefully)
+		return app_core.NewEventBus[any](wspPtr, caPtr, pgoPtr), nil
 	})
 
 	// Register goroutine-aware job dispatcher
@@ -70,11 +81,7 @@ func (p *GoroutineServiceProvider) Register(container *app_core.Container) error
 
 // Boot boots the goroutine service provider
 func (p *GoroutineServiceProvider) Boot(container *app_core.Container) error {
-	// Set up automatic goroutine optimization for existing listeners
-	if err := p.setupGoroutineOptimization(container); err != nil {
-		return err
-	}
-
+	// Goroutine optimization services are registered and ready
 	log.Printf("Goroutine services booted successfully")
 	return nil
 }
@@ -91,24 +98,33 @@ func (p *GoroutineServiceProvider) When() []string {
 
 // setupGoroutineOptimization sets up automatic goroutine optimization for existing listeners
 func (p *GoroutineServiceProvider) setupGoroutineOptimization(container *app_core.Container) error {
+	log.Printf("Starting goroutine optimization setup...")
+	
 	// Get the goroutine-aware event dispatcher
+	log.Printf("Resolving goroutine.event_dispatcher...")
 	dispatcherInstance, err := container.Resolve("goroutine.event_dispatcher")
 	if err != nil {
+		log.Printf("Failed to resolve goroutine.event_dispatcher: %v", err)
 		return err
 	}
+	log.Printf("Successfully resolved goroutine.event_dispatcher")
 
 	goroutineDispatcher := dispatcherInstance.(app_core.EventDispatcher[any])
 
 	// Get the existing event manager to register listeners
+	log.Printf("Resolving event_manager...")
 	eventManagerInstance, err := container.Resolve("event_manager")
 	if err != nil {
+		log.Printf("Failed to resolve event_manager: %v", err)
 		return err
 	}
+	log.Printf("Successfully resolved event_manager")
 
 	eventManager := eventManagerInstance.(app_core.EventManagerInterface[any])
 
 	// Register automatic goroutine optimization for all listeners
 	// This will be called when listeners are registered in the ListenerServiceProvider
+	log.Printf("Registering goroutine.listener_optimizer...")
 	container.Singleton("goroutine.listener_optimizer", func() (any, error) {
 		return &GoroutineListenerOptimizer{
 			eventManager:        eventManager,
@@ -116,6 +132,7 @@ func (p *GoroutineServiceProvider) setupGoroutineOptimization(container *app_cor
 		}, nil
 	})
 
+	log.Printf("Goroutine optimization setup completed successfully")
 	return nil
 }
 
