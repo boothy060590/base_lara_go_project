@@ -3,35 +3,68 @@ package providers
 import (
 	app_core "base_lara_go_project/app/core/go_core"
 	laravel_providers "base_lara_go_project/app/core/laravel_core/providers"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 )
 
-// RouterServiceProvider loads and registers application routes
+// RouterServiceProvider provides optimized routing with HTTP performance enhancements
 type RouterServiceProvider struct {
 	laravel_providers.BaseServiceProvider
+	httpOptimizer *app_core.HTTPOptimizer
 }
 
-// Register registers the router service provider
+// Register registers the router service provider with HTTP optimization
 func (p *RouterServiceProvider) Register(container *app_core.Container) error {
-	// Register router as singleton
+	// Register router as singleton with HTTP optimization support
 	container.Singleton("router", func() (any, error) {
 		router := gin.Default()
 
 		// Add CORS middleware
 		router.Use(p.corsMiddleware())
 
+		// Add performance monitoring middleware
+		router.Use(p.performanceMiddleware(container))
+
 		return router, nil
 	})
 
-	log.Printf("Router service provider registered successfully")
+	// Register optimized HTTP server
+	container.Singleton("http.server", func() (any, error) {
+		// Get HTTP optimizer
+		optimizerInstance, err := container.Resolve("http.optimizer")
+		if err != nil {
+			log.Printf("HTTP optimizer not found, falling back to standard server: %v", err)
+			return nil, err
+		}
+
+		optimizer := optimizerInstance.(*app_core.HTTPOptimizer)
+		p.httpOptimizer = optimizer
+
+		// Get router
+		routerInstance, err := container.Resolve("router")
+		if err != nil {
+			return nil, err
+		}
+
+		router := routerInstance.(*gin.Engine)
+
+		// Set the router as the handler for the optimizer
+		optimizer.SetHandler(router)
+
+		log.Printf("Optimized HTTP server registered with fasthttp support")
+		return optimizer, nil
+	})
+
+	log.Printf("Router service provider registered successfully with HTTP optimization")
 	return nil
 }
 
-// Boot loads application routes
+// Boot loads application routes with optimization
 func (p *RouterServiceProvider) Boot(container *app_core.Container) error {
 	// Get router from container
 	routerInstance, err := container.Resolve("router")
@@ -47,13 +80,18 @@ func (p *RouterServiceProvider) Boot(container *app_core.Container) error {
 		return err
 	}
 
-	log.Printf("Routes loaded successfully")
+	// Add HTTP optimization routes
+	if err := p.addOptimizationRoutes(router, container); err != nil {
+		return err
+	}
+
+	log.Printf("Routes loaded successfully with HTTP optimization")
 	return nil
 }
 
 // Provides returns the services this provider provides
 func (p *RouterServiceProvider) Provides() []string {
-	return []string{"router"}
+	return []string{"router", "http.server"}
 }
 
 // When returns the conditions when this provider should be loaded
@@ -102,15 +140,70 @@ func (p *RouterServiceProvider) createDefaultRoutes(router *gin.Engine, containe
 	// Create API routes group
 	api := router.Group("/api/v1")
 	{
-		// Auth routes
-		_ = api.Group("/auth")
+		// Health check endpoint
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"status":    "ok",
+				"timestamp": gin.H{"now": "2024-01-01T00:00:00Z"},
+				"service":   "laravel-go-framework",
+			})
+		})
+
+		// Performance test endpoint
+		api.GET("/performance", func(c *gin.Context) {
+			if p.httpOptimizer != nil {
+				metrics := p.httpOptimizer.GetMetrics()
+				c.JSON(http.StatusOK, gin.H{
+					"performance": metrics,
+				})
+			} else {
+				c.JSON(http.StatusOK, gin.H{
+					"performance": "HTTP optimizer not available",
+				})
+			}
+		})
+
+		// Auth routes placeholder
+		auth := api.Group("/auth")
 		{
-			// TODO: Get controllers from container
-			// authController := getAuthController(container)
-			// auth.POST("/register", authController.Register)
-			// auth.POST("/login", authController.Login)
-			// auth.GET("/profile", authController.GetProfile)
+			auth.POST("/register", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"message": "Register endpoint - TODO: implement"})
+			})
+			auth.POST("/login", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"message": "Login endpoint - TODO: implement"})
+			})
+			auth.GET("/profile", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"message": "Profile endpoint - TODO: implement"})
+			})
 		}
+	}
+
+	return nil
+}
+
+// addOptimizationRoutes adds HTTP optimization specific routes
+func (p *RouterServiceProvider) addOptimizationRoutes(router *gin.Engine, container *app_core.Container) error {
+	// Get HTTP optimization config
+	configInstance, err := container.Resolve("http.optimization.config")
+	if err != nil {
+		return nil // Skip if not available
+	}
+
+	config := configInstance.(*app_core.HTTPOptimizationConfig)
+
+	// Add metrics endpoint if enabled
+	if config.EnableMetrics && config.MetricsPath != "" {
+		router.GET(config.MetricsPath, func(c *gin.Context) {
+			if p.httpOptimizer != nil {
+				metrics := p.httpOptimizer.GetMetrics()
+				c.JSON(http.StatusOK, metrics)
+			} else {
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error": "HTTP optimizer not available",
+				})
+			}
+		})
+		log.Printf("HTTP metrics endpoint available at: %s", config.MetricsPath)
 	}
 
 	return nil
@@ -132,4 +225,19 @@ func (p *RouterServiceProvider) corsMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// performanceMiddleware adds performance monitoring
+func (p *RouterServiceProvider) performanceMiddleware(container *app_core.Container) gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		// Custom log format with performance metrics
+		return fmt.Sprintf("[HTTP] %v | %3d | %13v | %15s | %-7s %#v\n",
+			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			param.StatusCode,
+			param.Latency,
+			param.ClientIP,
+			param.Method,
+			param.Path,
+		)
+	})
 }

@@ -5,6 +5,7 @@ import (
 	laravel_providers "base_lara_go_project/app/core/laravel_core/providers"
 	"base_lara_go_project/app/providers"
 	"base_lara_go_project/config"
+	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -31,15 +32,28 @@ func main() {
 		panic(err)
 	}
 
-	// Get router from container
-	routerInstance, err := container.Resolve("router")
-	if err != nil {
-		panic(err)
+	// Try to get optimized HTTP server first, fallback to standard router
+	if httpServerInstance, err := container.Resolve("http.server"); err == nil {
+		// Use optimized HTTP server with fasthttp
+		httpServer := httpServerInstance.(*app_core.HTTPOptimizer)
+		appConfig := config.AppConfig()
+		port := appConfig["port"].(string)
+		
+		log.Printf("Starting optimized HTTP server on port %s with fasthttp", port)
+		if err := httpServer.ListenAndServe(":" + port); err != nil {
+			panic(err)
+		}
+	} else {
+		// Fallback to standard Gin router
+		log.Printf("HTTP optimizer not available, falling back to standard Gin router: %v", err)
+		
+		routerInstance, err := container.Resolve("router")
+		if err != nil {
+			panic(err)
+		}
+
+		router := routerInstance.(*gin.Engine)
+		appConfig := config.AppConfig()
+		router.Run(":" + appConfig["port"].(string))
 	}
-
-	router := routerInstance.(*gin.Engine)
-
-	// Start the server
-	appConfig := config.AppConfig()
-	router.Run(":" + appConfig["port"].(string))
 }
