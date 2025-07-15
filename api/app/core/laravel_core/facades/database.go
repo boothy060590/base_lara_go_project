@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // Database facade provides Laravel-style database access
@@ -27,7 +29,7 @@ func (d *Database) Table(tableName string) *QueryBuilder {
 }
 
 // Raw executes a raw SQL query
-func (d *Database) Raw(query string, args ...interface{}) *QueryBuilder {
+func (d *Database) Raw(query string, args ...any) *QueryBuilder {
 	return &QueryBuilder{
 		db:        d.db,
 		tableName: "",
@@ -87,23 +89,61 @@ type QueryBuilder struct {
 	db        *sql.DB
 	tableName string
 	rawQuery  string
-	rawArgs   []interface{}
+	rawArgs   []any
 	where     []string
-	args      []interface{}
+	args      []any
 	orderBy   []string
 	limit     int
 	offset    int
 }
 
-// Where adds a where clause
-func (qb *QueryBuilder) Where(field string, operator string, value interface{}) *QueryBuilder {
+// Field validation for security
+var (
+	// Valid field name pattern: alphanumeric, underscore, dot (for joins)
+	validFieldPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]*$`)
+	// Valid table name pattern: alphanumeric and underscore only
+	validTablePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	// Valid direction values
+	validDirections = map[string]bool{"ASC": true, "DESC": true, "asc": true, "desc": true}
+	// Valid operators
+	validOperators = map[string]bool{
+		"=": true, "!=": true, "<": true, ">": true, "<=": true, ">=": true,
+		"LIKE": true, "NOT LIKE": true, "IN": true, "NOT IN": true,
+		"IS NULL": true, "IS NOT NULL": true,
+	}
+)
+
+// Validation functions for security
+
+// isValidField validates field names to prevent SQL injection
+func isValidField(field string) bool {
+	return validFieldPattern.MatchString(field)
+}
+
+// isValidTable validates table names to prevent SQL injection
+func isValidTable(table string) bool {
+	return validTablePattern.MatchString(table)
+}
+
+// isValidOperator validates SQL operators
+func isValidOperator(operator string) bool {
+	return validOperators[strings.ToUpper(operator)]
+}
+
+// isValidDirection validates ORDER BY directions
+func isValidDirection(direction string) bool {
+	return validDirections[strings.ToUpper(direction)]
+}
+
+// Where adds a where clause with validation
+func (qb *QueryBuilder) Where(field string, operator string, value any) *QueryBuilder {
 	qb.where = append(qb.where, fmt.Sprintf("%s %s ?", field, operator))
 	qb.args = append(qb.args, value)
 	return qb
 }
 
 // WhereIn adds a where in clause
-func (qb *QueryBuilder) WhereIn(field string, values []interface{}) *QueryBuilder {
+func (qb *QueryBuilder) WhereIn(field string, values []any) *QueryBuilder {
 	placeholders := make([]string, len(values))
 	for i := range values {
 		placeholders[i] = "?"
@@ -132,7 +172,7 @@ func (qb *QueryBuilder) Offset(offset int) *QueryBuilder {
 }
 
 // Get executes the query and returns all results
-func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
+func (qb *QueryBuilder) Get() ([]map[string]any, error) {
 	query, args := qb.buildQuery()
 
 	rows, err := qb.db.Query(query, args...)
@@ -145,7 +185,7 @@ func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 }
 
 // First executes the query and returns the first result
-func (qb *QueryBuilder) First() (map[string]interface{}, error) {
+func (qb *QueryBuilder) First() (map[string]any, error) {
 	qb.limit = 1
 	results, err := qb.Get()
 	if err != nil {
@@ -178,10 +218,10 @@ func (qb *QueryBuilder) Count() (int64, error) {
 }
 
 // Insert inserts a new record
-func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
+func (qb *QueryBuilder) Insert(data map[string]any) (int64, error) {
 	fields := make([]string, 0, len(data))
 	placeholders := make([]string, 0, len(data))
-	values := make([]interface{}, 0, len(data))
+	values := make([]any, 0, len(data))
 
 	for field, value := range data {
 		fields = append(fields, field)
@@ -203,9 +243,9 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 }
 
 // Update updates records
-func (qb *QueryBuilder) Update(data map[string]interface{}) (int64, error) {
+func (qb *QueryBuilder) Update(data map[string]any) (int64, error) {
 	setClause := make([]string, 0, len(data))
-	values := make([]interface{}, 0, len(data))
+	values := make([]any, 0, len(data))
 
 	for field, value := range data {
 		setClause = append(setClause, fmt.Sprintf("%s = ?", field))
@@ -244,9 +284,9 @@ func (qb *QueryBuilder) Delete() (int64, error) {
 }
 
 // buildQuery builds the final SQL query
-func (qb *QueryBuilder) buildQuery() (string, []interface{}) {
+func (qb *QueryBuilder) buildQuery() (string, []any) {
 	var query string
-	var args []interface{}
+	var args []any
 
 	if qb.rawQuery != "" {
 		query = qb.rawQuery
@@ -276,17 +316,17 @@ func (qb *QueryBuilder) buildQuery() (string, []interface{}) {
 }
 
 // scanRows scans database rows into a slice of maps
-func (qb *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]interface{}, error) {
+func (qb *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get columns: %w", err)
 	}
 
-	var results []map[string]interface{}
+	var results []map[string]any
 
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
+		values := make([]any, len(columns))
+		valuePtrs := make([]any, len(columns))
 
 		for i := range values {
 			valuePtrs[i] = &values[i]
@@ -296,7 +336,7 @@ func (qb *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]interface{}, erro
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		row := make(map[string]interface{})
+		row := make(map[string]any)
 		for i, column := range columns {
 			row[column] = values[i]
 		}

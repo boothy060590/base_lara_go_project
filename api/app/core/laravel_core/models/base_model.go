@@ -2,13 +2,15 @@ package models_core
 
 import (
 	"strings"
-
-	"gorm.io/gorm"
+	"time"
 )
 
-// BaseModel provides common functionality for all models
+// BaseModel provides common functionality for all models with raw SQL fields
 type BaseModel struct {
-	gorm.Model
+	ID        uint       `json:"id" db:"id"`
+	CreatedAt time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at" db:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
 	BaseModelData
 }
 
@@ -169,4 +171,53 @@ func (b *BaseModelData) GetFullName() string {
 		return firstName + " " + lastName
 	}
 	return firstName + lastName
+}
+
+// BaseModel methods for timestamp handling (Laravel-style)
+
+// IsDeleted checks if the model is soft deleted
+func (bm *BaseModel) IsDeleted() bool {
+	return bm.DeletedAt != nil
+}
+
+// Touch updates the updated_at timestamp
+func (bm *BaseModel) Touch() {
+	bm.UpdatedAt = time.Now()
+}
+
+// MarkAsDeleted sets the deleted_at timestamp (soft delete)
+func (bm *BaseModel) MarkAsDeleted() {
+	now := time.Now()
+	bm.DeletedAt = &now
+	bm.UpdatedAt = now
+}
+
+// Restore clears the deleted_at timestamp
+func (bm *BaseModel) Restore() {
+	bm.DeletedAt = nil
+	bm.UpdatedAt = time.Now()
+}
+
+// GetCreatedAt returns created_at timestamp
+func (bm *BaseModel) GetCreatedAt() time.Time {
+	return bm.CreatedAt
+}
+
+// GetUpdatedAt returns updated_at timestamp
+func (bm *BaseModel) GetUpdatedAt() time.Time {
+	return bm.UpdatedAt
+}
+
+// GetDeletedAt returns deleted_at timestamp
+func (bm *BaseModel) GetDeletedAt() *time.Time {
+	return bm.DeletedAt
+}
+
+// SetTimestamps sets created_at and updated_at for new models
+func (bm *BaseModel) SetTimestamps() {
+	now := time.Now()
+	if bm.ID == 0 { // New model
+		bm.CreatedAt = now
+	}
+	bm.UpdatedAt = now
 }

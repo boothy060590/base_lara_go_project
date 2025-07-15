@@ -174,7 +174,7 @@ func NewDynamicOptimizer() *DynamicOptimizer {
 }
 
 // OptimizeByType optimizes an object based on its runtime type
-func (do *DynamicOptimizer) OptimizeByType(obj interface{}) error {
+func (do *DynamicOptimizer) OptimizeByType(obj any) error {
 	objType := reflect.TypeOf(obj)
 
 	do.mu.RLock()
@@ -420,11 +420,11 @@ func (goo *GoroutineOptimizer) OptimizeGOMAXPROCS() {
 }
 
 // GetGoroutineStats returns current goroutine statistics
-func (goo *GoroutineOptimizer) GetGoroutineStats() map[string]interface{} {
+func (goo *GoroutineOptimizer) GetGoroutineStats() map[string]any {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"num_goroutines": runtime.NumGoroutine(),
 		"num_cpu":        runtime.NumCPU(),
 		"gomaxprocs":     runtime.GOMAXPROCS(0),
@@ -484,12 +484,12 @@ func (pf *PerformanceFacade) Track(name string, fn func() error) error {
 }
 
 // Optimize optimizes an object
-func (pf *PerformanceFacade) Optimize(obj interface{}) error {
+func (pf *PerformanceFacade) Optimize(obj any) error {
 	return pf.dynamicOptimizer.OptimizeByType(obj)
 }
 
 // GetStats returns performance statistics
-func (pf *PerformanceFacade) GetStats() map[string]interface{} {
+func (pf *PerformanceFacade) GetStats() map[string]any {
 	stats := pf.optimizer.GetGoroutineStats()
 	stats["metrics"] = pf.profiler.GetMetrics()
 	return stats

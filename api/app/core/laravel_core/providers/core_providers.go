@@ -82,7 +82,9 @@ func (p *CoreServiceProvider) registerDatabase(container *app_core.Container) er
 		return nil, nil
 	})
 
-	container.Singleton("gorm.db", func() (any, error) {
+	// Register raw SQL database connection
+	container.Singleton("sql.db", func() (any, error) {
+		// TODO: Return actual *sql.DB instance from database provider
 		return nil, nil
 	})
 

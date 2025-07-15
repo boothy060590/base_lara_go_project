@@ -33,7 +33,7 @@ func DefaultContextConfig() *ContextConfig {
 }
 
 // NewContextConfigFromConfig creates a context config from Laravel-style config
-func NewContextConfigFromConfig(configMap map[string]interface{}) *ContextConfig {
+func NewContextConfigFromConfig(configMap map[string]any) *ContextConfig {
 	if configMap == nil {
 		return DefaultContextConfig()
 	}
@@ -47,7 +47,7 @@ func NewContextConfigFromConfig(configMap map[string]interface{}) *ContextConfig
 	}
 
 	// Load from config if available
-	if defaults, ok := configMap["defaults"].(map[string]interface{}); ok {
+	if defaults, ok := configMap["defaults"].(map[string]any); ok {
 		if timeout, ok := defaults["timeout"].(int); ok {
 			config.DefaultTimeout = time.Duration(timeout) * time.Second
 		}
@@ -69,13 +69,13 @@ func NewContextConfigFromConfig(configMap map[string]interface{}) *ContextConfig
 }
 
 // GetOperationTimeout gets the timeout for a specific operation from config
-func GetOperationTimeout(configMap map[string]interface{}, operation string) time.Duration {
+func GetOperationTimeout(configMap map[string]any, operation string) time.Duration {
 	if configMap == nil {
 		return 30 * time.Second
 	}
 
-	if operations, ok := configMap["operations"].(map[string]interface{}); ok {
-		if opConfig, ok := operations[operation].(map[string]interface{}); ok {
+	if operations, ok := configMap["operations"].(map[string]any); ok {
+		if opConfig, ok := operations[operation].(map[string]any); ok {
 			if timeout, ok := opConfig["timeout"].(int); ok {
 				return time.Duration(timeout) * time.Second
 			}
@@ -86,13 +86,13 @@ func GetOperationTimeout(configMap map[string]interface{}, operation string) tim
 }
 
 // GetProfileTimeout gets the timeout for a specific profile from config
-func GetProfileTimeout(configMap map[string]interface{}, profile string) time.Duration {
+func GetProfileTimeout(configMap map[string]any, profile string) time.Duration {
 	if configMap == nil {
 		return 30 * time.Second
 	}
 
-	if profiles, ok := configMap["profiles"].(map[string]interface{}); ok {
-		if profileConfig, ok := profiles[profile].(map[string]interface{}); ok {
+	if profiles, ok := configMap["profiles"].(map[string]any); ok {
+		if profileConfig, ok := profiles[profile].(map[string]any); ok {
 			if timeout, ok := profileConfig["timeout"].(int); ok {
 				return time.Duration(timeout) * time.Second
 			}
@@ -142,7 +142,7 @@ func (cm *ContextManager) WithDeadline(ctx context.Context, deadline time.Time) 
 }
 
 // WithValues creates a context with propagated values
-func (cm *ContextManager) WithValues(ctx context.Context, values map[string]interface{}) context.Context {
+func (cm *ContextManager) WithValues(ctx context.Context, values map[string]any) context.Context {
 	if !cm.config.PropagateValues {
 		return ctx
 	}
@@ -229,13 +229,13 @@ func (cm *ContextManager) ExecuteWithContext(ctx context.Context, fn func(contex
 
 // ContextAware defines types that can work with context
 type ContextAware interface {
-	WithContext(ctx context.Context) interface{}
+	WithContext(ctx context.Context) any
 	GetContext() context.Context
 }
 
 // TimeoutAware defines types that can handle timeouts
 type TimeoutAware interface {
-	WithTimeout(timeout time.Duration) interface{}
+	WithTimeout(timeout time.Duration) any
 	GetTimeout() time.Duration
 }
 

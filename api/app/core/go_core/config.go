@@ -9,12 +9,12 @@ import (
 var (
 	globalConfigLoader *ConfigLoader
 	globalLoaderOnce   sync.Once
-	globalFuncMap      = make(map[string]func() map[string]interface{})
+	globalFuncMap      = make(map[string]func() map[string]any)
 	globalFuncMapMu    sync.RWMutex
 )
 
 // RegisterGlobalConfig registers a config function globally
-func RegisterGlobalConfig(configName string, configFunc func() map[string]interface{}) {
+func RegisterGlobalConfig(configName string, configFunc func() map[string]any) {
 	globalFuncMapMu.Lock()
 	defer globalFuncMapMu.Unlock()
 	globalFuncMap[configName] = configFunc
@@ -24,7 +24,7 @@ func RegisterGlobalConfig(configName string, configFunc func() map[string]interf
 func ClearGlobalConfigs() {
 	globalFuncMapMu.Lock()
 	defer globalFuncMapMu.Unlock()
-	globalFuncMap = make(map[string]func() map[string]interface{})
+	globalFuncMap = make(map[string]func() map[string]any)
 	// Reset the global loader to force recreation
 	globalConfigLoader = nil
 	globalLoaderOnce = sync.Once{}
@@ -43,8 +43,8 @@ func GetGlobalConfigLoader() *ConfigLoader {
 // ConfigLoader provides a flexible way to load configuration files dynamically
 type ConfigLoader struct {
 	configDir string
-	cache     map[string]map[string]interface{}
-	funcMap   map[string]func() map[string]interface{}
+	cache     map[string]map[string]any
+	funcMap   map[string]func() map[string]any
 	mu        sync.RWMutex
 }
 
@@ -56,22 +56,22 @@ func NewConfigLoader(configDir string) *ConfigLoader {
 
 	loader := &ConfigLoader{
 		configDir: configDir,
-		cache:     make(map[string]map[string]interface{}),
-		funcMap:   make(map[string]func() map[string]interface{}),
+		cache:     make(map[string]map[string]any),
+		funcMap:   make(map[string]func() map[string]any),
 	}
 
 	return loader
 }
 
 // RegisterConfig registers a config function for a given name
-func (cl *ConfigLoader) RegisterConfig(configName string, configFunc func() map[string]interface{}) {
+func (cl *ConfigLoader) RegisterConfig(configName string, configFunc func() map[string]any) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 	cl.funcMap[configName] = configFunc
 }
 
 // Load loads a configuration file by name dynamically
-func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) {
+func (cl *ConfigLoader) Load(configName string) (map[string]any, error) {
 	cl.mu.RLock()
 	if cached, exists := cl.cache[configName]; exists {
 		cl.mu.RUnlock()
@@ -106,7 +106,7 @@ func (cl *ConfigLoader) Load(configName string) (map[string]interface{}, error) 
 }
 
 // loadDynamicConfig loads a config file dynamically
-func (cl *ConfigLoader) loadDynamicConfig(configName string) (map[string]interface{}, error) {
+func (cl *ConfigLoader) loadDynamicConfig(configName string) (map[string]any, error) {
 	// Check if we have a registered config function
 	if configFunc, exists := cl.funcMap[configName]; exists {
 		result := configFunc()
@@ -144,7 +144,7 @@ func (cl *ConfigLoader) loadDynamicConfig(configName string) (map[string]interfa
 }
 
 // Get retrieves a configuration value using dot notation
-func (cl *ConfigLoader) Get(key string, defaultValue ...interface{}) interface{} {
+func (cl *ConfigLoader) Get(key string, defaultValue ...any) any {
 	parts := strings.Split(key, ".")
 	if len(parts) < 1 {
 		if len(defaultValue) > 0 {
@@ -186,7 +186,7 @@ func (cl *ConfigLoader) Get(key string, defaultValue ...interface{}) interface{}
 			if i == len(keyParts)-1 {
 				return val
 			}
-			if mapVal, isMap := val.(map[string]interface{}); isMap {
+			if mapVal, isMap := val.(map[string]any); isMap {
 				current = mapVal
 			} else {
 				if len(defaultValue) > 0 {
@@ -255,7 +255,7 @@ func (cl *ConfigLoader) Has(key string) bool {
 func (cl *ConfigLoader) ClearCache() {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
-	cl.cache = make(map[string]map[string]interface{})
+	cl.cache = make(map[string]map[string]any)
 }
 
 // Reload reloads a specific configuration
@@ -273,7 +273,7 @@ func (cl *ConfigLoader) LoadAndIgnore(configName string) error {
 }
 
 // Set sets a configuration value using dot notation
-func (cl *ConfigLoader) Set(key string, value interface{}) {
+func (cl *ConfigLoader) Set(key string, value any) {
 	parts := strings.Split(key, ".")
 	if len(parts) < 2 {
 		return // Need at least config name and key
@@ -286,7 +286,7 @@ func (cl *ConfigLoader) Set(key string, value interface{}) {
 	defer cl.mu.Unlock()
 
 	// Get or create the config map without calling Load()
-	var configMap map[string]interface{}
+	var configMap map[string]any
 
 	// Check if config exists in cache
 	if cached, exists := cl.cache[configName]; exists {
@@ -306,7 +306,7 @@ func (cl *ConfigLoader) Set(key string, value interface{}) {
 
 		// If still nil, create a new map
 		if configMap == nil {
-			configMap = make(map[string]interface{})
+			configMap = make(map[string]any)
 		}
 
 		// Cache the config map
@@ -326,17 +326,17 @@ func (cl *ConfigLoader) Set(key string, value interface{}) {
 
 		// Navigate to the next level
 		if val, exists := current[part]; exists {
-			if mapVal, isMap := val.(map[string]interface{}); isMap {
+			if mapVal, isMap := val.(map[string]any); isMap {
 				current = mapVal
 			} else {
 				// Replace non-map value with a new map
-				newMap := make(map[string]interface{})
+				newMap := make(map[string]any)
 				current[part] = newMap
 				current = newMap
 			}
 		} else {
 			// Create new map for this level
-			newMap := make(map[string]interface{})
+			newMap := make(map[string]any)
 			current[part] = newMap
 			current = newMap
 		}

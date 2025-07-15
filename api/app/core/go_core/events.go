@@ -39,8 +39,8 @@ type EventDispatcher[T any] interface {
 	WithContext(ctx context.Context) EventDispatcher[T]
 
 	// Performance operations
-	GetPerformanceStats() map[string]interface{}
-	GetOptimizationStats() map[string]interface{}
+	GetPerformanceStats() map[string]any
+	GetOptimizationStats() map[string]any
 
 	// Cleanup operations
 	Shutdown() error
@@ -64,7 +64,7 @@ type EventBus[T any] struct {
 	batchProcessor    *EventBatchProcessor[T]
 	pipelineProcessor *EventPipelineProcessor
 	contextDecorator  *ContextDecorator
-	config            map[string]interface{}
+	config            map[string]any
 }
 
 // NewEventBus creates a new event bus instance with performance optimizations
@@ -73,7 +73,7 @@ func NewEventBus[T any](wsp *WorkStealingPool[any], ca *CustomAllocator[any], pg
 }
 
 // NewEventBusWithConfig creates a new event bus with custom configuration
-func NewEventBusWithConfig[T any](config map[string]interface{}, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) EventDispatcher[T] {
+func NewEventBusWithConfig[T any](config map[string]any, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) EventDispatcher[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
@@ -297,11 +297,11 @@ func (e *EventBus[T]) GetListenerCount(eventName string) int {
 }
 
 // GetPerformanceStats returns event bus performance statistics
-func (e *EventBus[T]) GetPerformanceStats() map[string]interface{} {
+func (e *EventBus[T]) GetPerformanceStats() map[string]any {
 	stats := e.performanceFacade.GetStats()
 
 	// Add event-specific stats
-	stats["events"] = map[string]interface{}{
+	stats["events"] = map[string]any{
 		"operations_count": e.atomicCounter.Get(),
 		"event_pool_size":  len(e.eventPool.pool),
 		"listener_count":   len(e.listeners),
@@ -322,8 +322,8 @@ func (e *EventBus[T]) GetPerformanceStats() map[string]interface{} {
 }
 
 // GetOptimizationStats returns event bus optimization statistics
-func (e *EventBus[T]) GetOptimizationStats() map[string]interface{} {
-	return map[string]interface{}{
+func (e *EventBus[T]) GetOptimizationStats() map[string]any {
+	return map[string]any{
 		"atomic_operations":            e.atomicCounter.Get(),
 		"event_pool_usage":             len(e.eventPool.pool),
 		"listener_count":               len(e.listeners),
@@ -625,13 +625,13 @@ type EventBatchProcessor[T any] struct {
 	bufferMutex sync.Mutex
 	flushTicker *time.Ticker
 	done        chan bool
-	config      map[string]interface{}
+	config      map[string]any
 	// Add handler callback
 	eventHandler func(context.Context, *Event[T]) error
 }
 
 // NewEventBatchProcessor creates a new event batch processor
-func NewEventBatchProcessor[T any](config map[string]interface{}, handler func(context.Context, *Event[T]) error) *EventBatchProcessor[T] {
+func NewEventBatchProcessor[T any](config map[string]any, handler func(context.Context, *Event[T]) error) *EventBatchProcessor[T] {
 	batchSize := 100 // Default
 	enabled := false // Disabled by default
 
@@ -749,11 +749,11 @@ func (ebp *EventBatchProcessor[T]) SetEventHandler(handler func(context.Context,
 }
 
 // GetStats returns batch processor statistics
-func (ebp *EventBatchProcessor[T]) GetStats() map[string]interface{} {
+func (ebp *EventBatchProcessor[T]) GetStats() map[string]any {
 	ebp.bufferMutex.Lock()
 	defer ebp.bufferMutex.Unlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":     ebp.enabled,
 		"batch_size":  ebp.batchSize,
 		"buffer_size": len(ebp.batchBuffer),
@@ -764,11 +764,11 @@ func (ebp *EventBatchProcessor[T]) GetStats() map[string]interface{} {
 // EventPipelineProcessor handles pipeline operations for events
 type EventPipelineProcessor struct {
 	enabled bool
-	config  map[string]interface{}
+	config  map[string]any
 }
 
 // NewEventPipelineProcessor creates a new event pipeline processor
-func NewEventPipelineProcessor(config map[string]interface{}) *EventPipelineProcessor {
+func NewEventPipelineProcessor(config map[string]any) *EventPipelineProcessor {
 	return &EventPipelineProcessor{
 		enabled: false, // Disabled by default to avoid breaking tests
 		config:  config,
@@ -791,8 +791,8 @@ func (epp *EventPipelineProcessor) IsEnabled() bool {
 }
 
 // GetStats returns pipeline processor statistics
-func (epp *EventPipelineProcessor) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (epp *EventPipelineProcessor) GetStats() map[string]any {
+	return map[string]any{
 		"enabled": epp.enabled,
 		"config":  epp.config,
 	}

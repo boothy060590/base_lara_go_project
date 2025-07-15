@@ -2,6 +2,7 @@ package providers
 
 import (
 	app_core "base_lara_go_project/app/core/go_core"
+	"database/sql"
 	"log"
 )
 
@@ -56,10 +57,23 @@ type MigrationService struct{}
 // RunMigrations runs all database migrations
 func (m *MigrationService) RunMigrations(container *app_core.Container) error {
 	// Get database instance
-	_, err := container.Resolve("gorm.db")
+	dbInstance, err := container.Resolve("sql.db")
 	if err != nil {
 		log.Printf("Database not available for migrations: %v", err)
 		return nil // Don't fail if database isn't available yet
+	}
+
+	// Type assert to *sql.DB
+	db, ok := dbInstance.(*sql.DB)
+	if !ok {
+		log.Printf("Database instance is not *sql.DB type")
+		return nil
+	}
+
+	// Test database connection
+	if err := db.Ping(); err != nil {
+		log.Printf("Database connection test failed: %v", err)
+		return nil
 	}
 
 	// TODO: Implement actual migration running logic

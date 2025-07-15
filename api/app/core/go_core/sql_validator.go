@@ -199,7 +199,7 @@ func (sv *SQLValidator) containsUnsafeStringConcatenation(query string) bool {
 }
 
 // ValidateParameterizedQuery validates a parameterized query
-func (sv *SQLValidator) ValidateParameterizedQuery(query string, params []interface{}) error {
+func (sv *SQLValidator) ValidateParameterizedQuery(query string, params []any) error {
 	// Validate the base query
 	if err := sv.ValidateQuery(query); err != nil {
 		return err
@@ -224,7 +224,7 @@ func (sv *SQLValidator) ValidateParameterizedQuery(query string, params []interf
 }
 
 // validateParameter validates a single parameter
-func (sv *SQLValidator) validateParameter(param interface{}) error {
+func (sv *SQLValidator) validateParameter(param any) error {
 	switch v := param.(type) {
 	case string:
 		// Check for dangerous patterns in string parameters

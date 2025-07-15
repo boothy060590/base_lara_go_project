@@ -55,8 +55,8 @@ type Repository[T any] interface {
 	CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error)
 
 	// Performance operations
-	GetPerformanceStats() map[string]interface{}
-	GetOptimizationStats() map[string]interface{}
+	GetPerformanceStats() map[string]any
+	GetOptimizationStats() map[string]any
 
 	// Bulk operations for complex scenarios
 	BulkCreate(models []*T) error
@@ -119,7 +119,7 @@ type repository[T any] struct {
 	// Model metadata
 	tableName      string
 	fieldValidator *FieldValidator
-	config         map[string]interface{}
+	config         map[string]any
 
 	// Safety and validation
 	sqlValidator *SQLValidator
@@ -131,7 +131,7 @@ func NewRepository[T any](db *sql.DB, wsp *WorkStealingPool[any], ca *CustomAllo
 }
 
 // NewRepositoryWithConfig creates a new repository with custom configuration
-func NewRepositoryWithConfig[T any](db *sql.DB, config map[string]interface{}, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
+func NewRepositoryWithConfig[T any](db *sql.DB, config map[string]any, wsp *WorkStealingPool[any], ca *CustomAllocator[any], pgo *ProfileGuidedOptimizer[any]) Repository[T] {
 	// Determine table name from type
 	var model T
 	tableName := getTableName(model)
@@ -180,19 +180,26 @@ func NewRepositoryWithConfig[T any](db *sql.DB, config map[string]interface{}, w
 }
 
 // getTableName extracts table name from model type
-func getTableName(v interface{}) string {
+func getTableName(v any) string {
 	t := reflect.TypeOf(v)
+	
+	// If it's a pointer, get the element type
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
-	// Check for TableName method
-	if _, ok := t.MethodByName("TableName"); ok {
-		// Call the method to get table name
-		// This is a simplified version - in practice you'd need reflection to call it
-		return strings.ToLower(t.Name()) + "s"
+	// Create a new instance to call methods on
+	val := reflect.New(t)
+	
+	// Check for GetTableName method and call it
+	if method := val.MethodByName("GetTableName"); method.IsValid() {
+		results := method.Call(nil)
+		if len(results) > 0 && results[0].Kind() == reflect.String {
+			return results[0].String()
+		}
 	}
 
+	// Fallback to conventional naming
 	return strings.ToLower(t.Name()) + "s"
 }
 
@@ -217,10 +224,22 @@ func (r *repository[T]) FindWithContext(ctx context.Context, id uint) (*T, error
 		// Build safe parameterized query
 		query := fmt.Sprintf("SELECT * FROM %s WHERE id = ? AND deleted_at IS NULL", r.tableName)
 
-		// Get statement from cache
+		// Get statement from cache or prepare new one
 		stmt, err := r.statementCache.GetStatement(ctx, query)
 		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
+			return fmt.Errorf("failed to get cached statement: %w", err)
+		}
+		
+		// If no cached statement, prepare a new one
+		if stmt == nil {
+			stmt, err = r.db.PrepareContext(ctx, query)
+			if err != nil {
+				return fmt.Errorf("failed to prepare statement: %w", err)
+			}
+			defer stmt.Close()
+			
+			// Cache the statement for future use
+			r.statementCache.CacheStatement(query, stmt)
 		}
 
 		// Execute query with context
@@ -265,10 +284,22 @@ func (r *repository[T]) FindByWithContext(ctx context.Context, field string, val
 		// Build safe parameterized query
 		query := fmt.Sprintf("SELECT * FROM %s WHERE %s = ? AND deleted_at IS NULL LIMIT 1", r.tableName, field)
 
-		// Get statement from cache
+		// Get statement from cache or prepare new one
 		stmt, err := r.statementCache.GetStatement(ctx, query)
 		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
+			return fmt.Errorf("failed to get cached statement: %w", err)
+		}
+		
+		// If no cached statement, prepare a new one
+		if stmt == nil {
+			stmt, err = r.db.PrepareContext(ctx, query)
+			if err != nil {
+				return fmt.Errorf("failed to prepare statement: %w", err)
+			}
+			defer stmt.Close()
+			
+			// Cache the statement for future use
+			r.statementCache.CacheStatement(query, stmt)
 		}
 
 		// Execute query with context
@@ -306,10 +337,22 @@ func (r *repository[T]) FindAllWithContext(ctx context.Context) ([]T, error) {
 		// Build safe query
 		query := fmt.Sprintf("SELECT * FROM %s WHERE deleted_at IS NULL", r.tableName)
 
-		// Get statement from cache
+		// Get statement from cache or prepare new one
 		stmt, err := r.statementCache.GetStatement(ctx, query)
 		if err != nil {
-			return fmt.Errorf("failed to prepare statement: %w", err)
+			return fmt.Errorf("failed to get cached statement: %w", err)
+		}
+		
+		// If no cached statement, prepare a new one
+		if stmt == nil {
+			stmt, err = r.db.PrepareContext(ctx, query)
+			if err != nil {
+				return fmt.Errorf("failed to prepare statement: %w", err)
+			}
+			defer stmt.Close()
+			
+			// Cache the statement for future use
+			r.statementCache.CacheStatement(query, stmt)
 		}
 
 		// Execute query with context
@@ -764,20 +807,20 @@ func (r *repository[T]) CountWhereWithContext(ctx context.Context, conditions ma
 }
 
 // GetPerformanceStats returns performance statistics
-func (r *repository[T]) GetPerformanceStats() map[string]interface{} {
+func (r *repository[T]) GetPerformanceStats() map[string]any {
 	return r.performanceFacade.GetStats()
 }
 
 // GetOptimizationStats returns optimization statistics
-func (r *repository[T]) GetOptimizationStats() map[string]interface{} {
-	stats := make(map[string]interface{})
+func (r *repository[T]) GetOptimizationStats() map[string]any {
+	stats := make(map[string]any)
 
 	// Add atomic counter stats
 	stats["operations_count"] = r.atomicCounter.Get()
 
 	// Add optimization engine stats
 	if r.optimizationEngine != nil {
-		stats["optimization_engine"] = map[string]interface{}{
+		stats["optimization_engine"] = map[string]any{
 			"strategies_count": len(r.optimizationEngine.strategies),
 		}
 	}
@@ -855,7 +898,7 @@ func (r *repository[T]) BulkCreateWithContext(ctx context.Context, models []*T) 
 		}
 
 		// Prepare all values
-		var allValues []interface{}
+		var allValues []any
 		for _, model := range models {
 			_, values, err := r.getModelFieldsAndValues(model)
 			if err != nil {
@@ -934,7 +977,7 @@ func (r *repository[T]) BulkDeleteWithContext(ctx context.Context, ids []uint) e
 		}
 
 		// Convert ids to interface slice
-		args := make([]interface{}, len(ids))
+		args := make([]any, len(ids))
 		for i, id := range ids {
 			args[i] = id
 		}
@@ -950,13 +993,13 @@ func (r *repository[T]) BulkDeleteWithContext(ctx context.Context, ids []uint) e
 }
 
 // Helper methods for model manipulation
-func (r *repository[T]) getModelFieldsAndValues(model *T) ([]string, []interface{}, error) {
+func (r *repository[T]) getModelFieldsAndValues(model *T) ([]string, []any, error) {
 	// Use reflection to get field names and values
 	v := reflect.ValueOf(model).Elem()
 	t := v.Type()
 
 	var fields []string
-	var values []interface{}
+	var values []any
 
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
@@ -981,7 +1024,7 @@ func (r *repository[T]) getModelFieldsAndValues(model *T) ([]string, []interface
 	return fields, values, nil
 }
 
-func (r *repository[T]) getModelID(model *T) (interface{}, error) {
+func (r *repository[T]) getModelID(model *T) (any, error) {
 	v := reflect.ValueOf(model).Elem()
 	idField := v.FieldByName("ID")
 	if !idField.IsValid() {
@@ -1003,53 +1046,54 @@ func (r *repository[T]) setModelID(model *T, id uint) error {
 	return nil
 }
 
-func (r *repository[T]) scanRowToStruct(scanner interface{}, model *T) error {
-	// Use reflection to scan row into model
+func (r *repository[T]) scanRowToStruct(scanner any, model *T) error {
+	// Use reflection to scan row into model with type safety
 	v := reflect.ValueOf(model).Elem()
 	t := v.Type()
 
-	// Get column names from database
-	var columns []string
-	if rows, ok := scanner.(*sql.Rows); ok {
-		var err error
-		columns, err = rows.Columns()
-		if err != nil {
-			return fmt.Errorf("failed to get columns: %w", err)
-		}
-	} else {
-		// For single row, we need to get columns differently
-		// This is a simplified version - in practice you'd need more sophisticated column detection
-		return fmt.Errorf("unsupported scanner type for scanning")
+	// Handle both *sql.Rows and *sql.Row
+	switch s := scanner.(type) {
+	case *sql.Rows:
+		return r.scanRowsToStruct(s, v, t)
+	case *sql.Row:
+		return r.scanSingleRowToStruct(s, v, t)
+	default:
+		return fmt.Errorf("unsupported scanner type: %T", scanner)
+	}
+}
+
+// scanRowsToStruct handles *sql.Rows scanning
+func (r *repository[T]) scanRowsToStruct(rows *sql.Rows, v reflect.Value, t reflect.Type) error {
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("failed to get columns: %w", err)
 	}
 
-	// Create values slice for scanning
-	values := make([]interface{}, len(columns))
-	valuePtrs := make([]interface{}, len(columns))
-	for i := range values {
-		valuePtrs[i] = &values[i]
+	// Create field mapping for performance
+	fieldMap := r.buildFieldMap(t, columns)
+	
+	// Create scan destinations
+	scanDest := make([]any, len(columns))
+	for i, fieldInfo := range fieldMap {
+		if fieldInfo.Valid {
+			scanDest[i] = fieldInfo.ScanDest
+		} else {
+			// Use any for unmapped columns
+			var dummy any
+			scanDest[i] = &dummy
+		}
 	}
 
 	// Scan the row
-	if err := scanner.(*sql.Rows).Scan(valuePtrs...); err != nil {
+	if err := rows.Scan(scanDest...); err != nil {
 		return fmt.Errorf("failed to scan row: %w", err)
 	}
 
-	// Map values to struct fields
-	for i, column := range columns {
-		// Find matching field in struct
-		for j := 0; j < v.NumField(); j++ {
-			field := t.Field(j)
-			jsonTag := field.Tag.Get("json")
-
-			if jsonTag == column || strings.ToLower(field.Name) == column {
-				fieldValue := v.Field(j)
-				if fieldValue.CanSet() {
-					// Convert value to field type
-					if err := r.convertValue(values[i], fieldValue); err != nil {
-						return fmt.Errorf("failed to convert value for field %s: %w", field.Name, err)
-					}
-				}
-				break
+	// Set values to struct fields
+	for i, fieldInfo := range fieldMap {
+		if fieldInfo.Valid {
+			if err := r.setFieldValue(v, fieldInfo, scanDest[i]); err != nil {
+				return fmt.Errorf("failed to set field %s: %w", fieldInfo.Name, err)
 			}
 		}
 	}
@@ -1057,39 +1101,232 @@ func (r *repository[T]) scanRowToStruct(scanner interface{}, model *T) error {
 	return nil
 }
 
-func (r *repository[T]) convertValue(value interface{}, field reflect.Value) error {
-	// Convert database value to field type
-	// This is a simplified version - in practice you'd need more sophisticated type conversion
+// scanSingleRowToStruct handles *sql.Row scanning
+func (r *repository[T]) scanSingleRowToStruct(row *sql.Row, v reflect.Value, t reflect.Type) error {
+	// For single row, we need to scan all struct fields in order
+	// This assumes the query selects fields in the same order as the struct
+	scanDest := make([]any, v.NumField())
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		scanDest[i] = r.createScanDestination(field)
+	}
+
+	// Scan the row
+	if err := row.Scan(scanDest...); err != nil {
+		return fmt.Errorf("failed to scan single row: %w", err)
+	}
+
+	// Set values to struct fields
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		if field.CanSet() {
+			if err := r.setFieldValueDirect(field, scanDest[i]); err != nil {
+				return fmt.Errorf("failed to set field %s: %w", t.Field(i).Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// FieldInfo holds information about struct field mapping
+type FieldInfo struct {
+	Valid    bool
+	Name     string
+	Index    int
+	ScanDest any
+}
+
+// buildFieldMap creates a mapping between database columns and struct fields
+func (r *repository[T]) buildFieldMap(t reflect.Type, columns []string) []FieldInfo {
+	fieldMap := make([]FieldInfo, len(columns))
+	
+	for i, column := range columns {
+		fieldInfo := FieldInfo{Valid: false}
+		
+		// Find matching struct field
+		for j := 0; j < t.NumField(); j++ {
+			field := t.Field(j)
+			if r.matchesColumn(field, column) {
+				fieldInfo.Valid = true
+				fieldInfo.Name = field.Name
+				fieldInfo.Index = j
+				fieldInfo.ScanDest = r.createScanDestinationForType(field.Type)
+				break
+			}
+		}
+		
+		fieldMap[i] = fieldInfo
+	}
+	
+	return fieldMap
+}
+
+// matchesColumn checks if a struct field matches a database column
+func (r *repository[T]) matchesColumn(field reflect.StructField, column string) bool {
+	// Check json tag first
+	if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+		// Remove omitempty and other options
+		tagParts := strings.Split(jsonTag, ",")
+		if tagParts[0] == column {
+			return true
+		}
+	}
+	
+	// Check db tag
+	if dbTag := field.Tag.Get("db"); dbTag != "" {
+		if dbTag == column {
+			return true
+		}
+	}
+	
+	// Check snake_case conversion of field name
+	if r.toSnakeCase(field.Name) == column {
+		return true
+	}
+	
+	// Check lowercase field name
+	if strings.ToLower(field.Name) == column {
+		return true
+	}
+	
+	return false
+}
+
+// createScanDestinationForType creates appropriate scan destination for field type
+func (r *repository[T]) createScanDestinationForType(fieldType reflect.Type) any {
+	switch fieldType.Kind() {
+	case reflect.String:
+		return new(sql.NullString)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return new(sql.NullInt64)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return new(sql.NullInt64)
+	case reflect.Float32, reflect.Float64:
+		return new(sql.NullFloat64)
+	case reflect.Bool:
+		return new(sql.NullBool)
+	case reflect.Struct:
+		if fieldType == reflect.TypeOf(time.Time{}) {
+			return new(sql.NullTime)
+		}
+		fallthrough
+	default:
+		return new(any)
+	}
+}
+
+// createScanDestination creates scan destination for a reflect.Value
+func (r *repository[T]) createScanDestination(field reflect.Value) any {
+	return r.createScanDestinationForType(field.Type())
+}
+
+// setFieldValue sets a struct field value from scanned data
+func (r *repository[T]) setFieldValue(v reflect.Value, fieldInfo FieldInfo, scanDest any) error {
+	field := v.Field(fieldInfo.Index)
+	if !field.CanSet() {
+		return nil // Skip non-settable fields
+	}
+	
+	return r.setFieldValueDirect(field, scanDest)
+}
+
+// setFieldValueDirect sets field value directly with type conversion
+func (r *repository[T]) setFieldValueDirect(field reflect.Value, scanDest any) error {
+	switch dest := scanDest.(type) {
+	case *sql.NullString:
+		if dest.Valid {
+			field.SetString(dest.String)
+		}
+	case *sql.NullInt64:
+		if dest.Valid {
+			switch field.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				field.SetInt(dest.Int64)
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				field.SetUint(uint64(dest.Int64))
+			}
+		}
+	case *sql.NullFloat64:
+		if dest.Valid {
+			field.SetFloat(dest.Float64)
+		}
+	case *sql.NullBool:
+		if dest.Valid {
+			field.SetBool(dest.Bool)
+		}
+	case *sql.NullTime:
+		if dest.Valid {
+			field.Set(reflect.ValueOf(dest.Time))
+		}
+	case *any:
+		value := *dest
+		if value != nil {
+			return r.convertComplexValue(value, field)
+		}
+	default:
+		return fmt.Errorf("unsupported scan destination type: %T", scanDest)
+	}
+	
+	return nil
+}
+
+// convertComplexValue handles complex type conversions
+func (r *repository[T]) convertComplexValue(value any, field reflect.Value) error {
 	switch v := value.(type) {
 	case []byte:
-		// Handle JSON fields
+		// Handle JSON fields and byte arrays
 		if field.Type() == reflect.TypeOf(json.RawMessage{}) {
 			field.Set(reflect.ValueOf(json.RawMessage(v)))
-		} else {
+		} else if field.Kind() == reflect.String {
 			field.SetString(string(v))
+		} else {
+			// Try JSON unmarshaling for complex types
+			if field.Kind() == reflect.Struct || field.Kind() == reflect.Slice || field.Kind() == reflect.Map {
+				return json.Unmarshal(v, field.Addr().Interface())
+			}
 		}
 	case string:
-		field.SetString(v)
-	case int64:
-		field.SetInt(v)
-	case float64:
-		field.SetFloat(v)
-	case bool:
-		field.SetBool(v)
-	case time.Time:
-		field.Set(reflect.ValueOf(v))
+		if field.Kind() == reflect.String {
+			field.SetString(v)
+		} else {
+			// Try JSON unmarshaling for string-encoded JSON
+			if field.Kind() == reflect.Struct || field.Kind() == reflect.Slice || field.Kind() == reflect.Map {
+				return json.Unmarshal([]byte(v), field.Addr().Interface())
+			}
+		}
 	case nil:
 		// Handle NULL values
 		field.Set(reflect.Zero(field.Type()))
 	default:
-		field.Set(reflect.ValueOf(v))
+		// Direct assignment for compatible types
+		valueType := reflect.TypeOf(value)
+		if valueType.AssignableTo(field.Type()) {
+			field.Set(reflect.ValueOf(value))
+		} else if valueType.ConvertibleTo(field.Type()) {
+			field.Set(reflect.ValueOf(value).Convert(field.Type()))
+		} else {
+			return fmt.Errorf("cannot convert %T to %s", value, field.Type())
+		}
 	}
 	return nil
 }
 
-func (r *repository[T]) buildWhereClause(conditions map[string]any) (string, []interface{}) {
+// toSnakeCase converts CamelCase to snake_case
+func (r *repository[T]) toSnakeCase(str string) string {
+	var result strings.Builder
+	for i, r := range str {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune('_')
+		}
+		result.WriteRune(r)
+	}
+	return strings.ToLower(result.String())
+}
+
+func (r *repository[T]) buildWhereClause(conditions map[string]any) (string, []any) {
 	var clauses []string
-	var values []interface{}
+	var values []any
 
 	for field, value := range conditions {
 		clauses = append(clauses, fmt.Sprintf("%s = ?", field))

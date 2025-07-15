@@ -288,11 +288,11 @@ func (v *Validator[T]) Validated() map[string]any {
 }
 
 // GetPerformanceStats returns validation performance statistics
-func (v *Validator[T]) GetPerformanceStats() map[string]interface{} {
+func (v *Validator[T]) GetPerformanceStats() map[string]any {
 	stats := v.performanceFacade.GetStats()
 
 	// Add validation-specific stats
-	stats["validation"] = map[string]interface{}{
+	stats["validation"] = map[string]any{
 		"operations_count": v.atomicCounter.Get(),
 		"rule_pool_size":   len(v.rulePool.pool),
 		"rules_count":      len(v.rules),
@@ -302,8 +302,8 @@ func (v *Validator[T]) GetPerformanceStats() map[string]interface{} {
 }
 
 // GetOptimizationStats returns validation optimization statistics
-func (v *Validator[T]) GetOptimizationStats() map[string]interface{} {
-	return map[string]interface{}{
+func (v *Validator[T]) GetOptimizationStats() map[string]any {
+	return map[string]any{
 		"atomic_operations": v.atomicCounter.Get(),
 		"rule_pool_usage":   len(v.rulePool.pool),
 		"rules_count":       len(v.rules),

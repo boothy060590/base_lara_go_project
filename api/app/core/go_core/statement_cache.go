@@ -17,7 +17,7 @@ type StatementCache struct {
 	cacheMutex sync.RWMutex
 	stats      *StatementCacheStats
 	statsMutex sync.RWMutex
-	config     map[string]interface{}
+	config     map[string]any
 }
 
 // CachedStatement represents a cached prepared statement
@@ -38,7 +38,7 @@ type StatementCacheStats struct {
 }
 
 // NewStatementCache creates a new statement cache with configuration
-func NewStatementCache(config map[string]interface{}) *StatementCache {
+func NewStatementCache(config map[string]any) *StatementCache {
 	cache := &StatementCache{
 		enabled: true,
 		maxSize: 100, // Default max cache size
@@ -195,7 +195,7 @@ func (sc *StatementCache) updateEvictionStats() {
 }
 
 // GetStats returns statement cache statistics
-func (sc *StatementCache) GetStats() map[string]interface{} {
+func (sc *StatementCache) GetStats() map[string]any {
 	sc.statsMutex.RLock()
 	defer sc.statsMutex.RUnlock()
 
@@ -205,7 +205,7 @@ func (sc *StatementCache) GetStats() map[string]interface{} {
 		hitRate = float64(sc.stats.HitCount) / float64(totalRequests) * 100
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":        sc.enabled,
 		"max_size":       sc.maxSize,
 		"ttl":            sc.ttl.String(),

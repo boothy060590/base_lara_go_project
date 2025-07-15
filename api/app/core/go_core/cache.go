@@ -53,8 +53,8 @@ type Cache[T any] interface {
 	WithContext(ctx context.Context) Cache[T]
 
 	// Performance operations
-	GetPerformanceStats() map[string]interface{}
-	GetOptimizationStats() map[string]interface{}
+	GetPerformanceStats() map[string]any
+	GetOptimizationStats() map[string]any
 }
 
 // redisCache implements Cache[T] with Redis and performance optimizations
@@ -72,7 +72,7 @@ type redisCache[T any] struct {
 	asyncProcessor    *CacheAsyncProcessor[T]
 	pipelineProcessor *CachePipelineProcessor
 	contextDecorator  *ContextDecorator
-	config            map[string]interface{}
+	config            map[string]any
 }
 
 // NewRedisCache creates a new Redis cache instance with performance optimizations
@@ -81,7 +81,7 @@ func NewRedisCache[T any](client *redis.Client) Cache[T] {
 }
 
 // NewRedisCacheWithConfig creates a new Redis cache with custom configuration
-func NewRedisCacheWithConfig[T any](client *redis.Client, config map[string]interface{}) Cache[T] {
+func NewRedisCacheWithConfig[T any](client *redis.Client, config map[string]any) Cache[T] {
 	// Create performance optimizations
 	atomicCounter := NewAtomicCounter()
 	performanceFacade := NewPerformanceFacade()
@@ -309,7 +309,7 @@ func (c *redisCache[T]) GetManyWithContext(ctx context.Context, keys []string) (
 			continue // Key not found
 		}
 
-		// Convert interface{} to []byte
+		// Convert any to []byte
 		data, ok := result.(string)
 		if !ok {
 			continue // Invalid data
@@ -405,11 +405,11 @@ func (c *redisCache[T]) FlushWithContext(ctx context.Context) error {
 }
 
 // GetPerformanceStats returns cache performance statistics
-func (c *redisCache[T]) GetPerformanceStats() map[string]interface{} {
+func (c *redisCache[T]) GetPerformanceStats() map[string]any {
 	stats := c.performanceFacade.GetStats()
 
 	// Add cache-specific stats
-	stats["cache"] = map[string]interface{}{
+	stats["cache"] = map[string]any{
 		"operations_count":       c.atomicCounter.Get(),
 		"json_encoder_pool_size": len(c.jsonEncoderPool.pool),
 		"json_decoder_pool_size": len(c.jsonDecoderPool.pool),
@@ -436,8 +436,8 @@ func (c *redisCache[T]) GetPerformanceStats() map[string]interface{} {
 }
 
 // GetOptimizationStats returns cache optimization statistics
-func (c *redisCache[T]) GetOptimizationStats() map[string]interface{} {
-	return map[string]interface{}{
+func (c *redisCache[T]) GetOptimizationStats() map[string]any {
+	return map[string]any{
 		"atomic_operations":            c.atomicCounter.Get(),
 		"json_encoder_pool_usage":      len(c.jsonEncoderPool.pool),
 		"json_decoder_pool_usage":      len(c.jsonDecoderPool.pool),
@@ -502,7 +502,7 @@ type CacheBatchProcessor[T any] struct {
 	bufferMutex sync.Mutex
 	flushTicker *time.Ticker
 	done        chan bool
-	config      map[string]interface{}
+	config      map[string]any
 }
 
 type CacheBatchItem[T any] struct {
@@ -513,7 +513,7 @@ type CacheBatchItem[T any] struct {
 }
 
 // NewCacheBatchProcessor creates a new cache batch processor
-func NewCacheBatchProcessor[T any](config map[string]interface{}) *CacheBatchProcessor[T] {
+func NewCacheBatchProcessor[T any](config map[string]any) *CacheBatchProcessor[T] {
 	batchSize := 100 // Default
 	if size, ok := config["cache_batch_size"].(int); ok {
 		batchSize = size
@@ -666,11 +666,11 @@ func (cbp *CacheBatchProcessor[T]) IsEnabled() bool {
 }
 
 // GetStats returns batch processor statistics
-func (cbp *CacheBatchProcessor[T]) GetStats() map[string]interface{} {
+func (cbp *CacheBatchProcessor[T]) GetStats() map[string]any {
 	cbp.bufferMutex.Lock()
 	defer cbp.bufferMutex.Unlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":     cbp.enabled,
 		"batch_size":  cbp.batchSize,
 		"buffer_size": len(cbp.batchBuffer),
@@ -681,11 +681,11 @@ func (cbp *CacheBatchProcessor[T]) GetStats() map[string]interface{} {
 // CacheConnectionPool manages connection pooling for cache
 type CacheConnectionPool struct {
 	enabled bool
-	config  map[string]interface{}
+	config  map[string]any
 }
 
 // NewCacheConnectionPool creates a new cache connection pool
-func NewCacheConnectionPool(config map[string]interface{}) *CacheConnectionPool {
+func NewCacheConnectionPool(config map[string]any) *CacheConnectionPool {
 	return &CacheConnectionPool{
 		enabled: true,
 		config:  config,
@@ -698,8 +698,8 @@ func (ccp *CacheConnectionPool) IsEnabled() bool {
 }
 
 // GetStats returns connection pool statistics
-func (ccp *CacheConnectionPool) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (ccp *CacheConnectionPool) GetStats() map[string]any {
+	return map[string]any{
 		"enabled": ccp.enabled,
 		"config":  ccp.config,
 	}
@@ -708,11 +708,11 @@ func (ccp *CacheConnectionPool) GetStats() map[string]interface{} {
 // CacheAsyncProcessor handles async operations for cache
 type CacheAsyncProcessor[T any] struct {
 	enabled bool
-	config  map[string]interface{}
+	config  map[string]any
 }
 
 // NewCacheAsyncProcessor creates a new cache async processor
-func NewCacheAsyncProcessor[T any](config map[string]interface{}) *CacheAsyncProcessor[T] {
+func NewCacheAsyncProcessor[T any](config map[string]any) *CacheAsyncProcessor[T] {
 	return &CacheAsyncProcessor[T]{
 		enabled: true,
 		config:  config,
@@ -749,8 +749,8 @@ func (cap *CacheAsyncProcessor[T]) IsEnabled() bool {
 }
 
 // GetStats returns async processor statistics
-func (cap *CacheAsyncProcessor[T]) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (cap *CacheAsyncProcessor[T]) GetStats() map[string]any {
+	return map[string]any{
 		"enabled": cap.enabled,
 		"config":  cap.config,
 	}
@@ -759,11 +759,11 @@ func (cap *CacheAsyncProcessor[T]) GetStats() map[string]interface{} {
 // CachePipelineProcessor handles pipeline operations for cache
 type CachePipelineProcessor struct {
 	enabled bool
-	config  map[string]interface{}
+	config  map[string]any
 }
 
 // NewCachePipelineProcessor creates a new cache pipeline processor
-func NewCachePipelineProcessor(config map[string]interface{}) *CachePipelineProcessor {
+func NewCachePipelineProcessor(config map[string]any) *CachePipelineProcessor {
 	return &CachePipelineProcessor{
 		enabled: true,
 		config:  config,
@@ -786,8 +786,8 @@ func (cpp *CachePipelineProcessor) IsEnabled() bool {
 }
 
 // GetStats returns pipeline processor statistics
-func (cpp *CachePipelineProcessor) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (cpp *CachePipelineProcessor) GetStats() map[string]any {
+	return map[string]any{
 		"enabled": cpp.enabled,
 		"config":  cpp.config,
 	}
@@ -1274,11 +1274,11 @@ func (c *localCache[T]) matchesPattern(key, pattern string) bool {
 }
 
 // GetPerformanceStats returns local cache performance statistics
-func (c *localCache[T]) GetPerformanceStats() map[string]interface{} {
+func (c *localCache[T]) GetPerformanceStats() map[string]any {
 	stats := c.performanceFacade.GetStats()
 
 	// Add cache-specific stats
-	stats["cache"] = map[string]interface{}{
+	stats["cache"] = map[string]any{
 		"operations_count": c.atomicCounter.Get(),
 		"cache_size":       len(c.data),
 	}
@@ -1287,8 +1287,8 @@ func (c *localCache[T]) GetPerformanceStats() map[string]interface{} {
 }
 
 // GetOptimizationStats returns local cache optimization statistics
-func (c *localCache[T]) GetOptimizationStats() map[string]interface{} {
-	return map[string]interface{}{
+func (c *localCache[T]) GetOptimizationStats() map[string]any {
+	return map[string]any{
 		"atomic_operations": c.atomicCounter.Get(),
 		"cache_size":        len(c.data),
 	}

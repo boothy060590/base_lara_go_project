@@ -14,14 +14,14 @@ type ContextDecorator struct {
 	contextPool        *ContextPool
 
 	// Configuration
-	config map[string]interface{}
+	config map[string]any
 
 	// Thread safety
 	mu sync.RWMutex
 }
 
 // NewContextDecorator creates a new context decorator with performance tracking
-func NewContextDecorator(config map[string]interface{}) *ContextDecorator {
+func NewContextDecorator(config map[string]any) *ContextDecorator {
 	return &ContextDecorator{
 		performanceTracker: NewPerformanceTracker(),
 		contextPool:        NewContextPool(100), // Configurable pool size
@@ -89,7 +89,7 @@ func (cd *ContextDecorator) WithCancellation(ctx context.Context, operation stri
 }
 
 // WithValues creates a context with additional values for tracing
-func (cd *ContextDecorator) WithValues(ctx context.Context, operation string, values map[string]interface{}, fn func(context.Context) error) error {
+func (cd *ContextDecorator) WithValues(ctx context.Context, operation string, values map[string]any, fn func(context.Context) error) error {
 	// Add values to context
 	enhancedCtx := ctx
 	for key, value := range values {
@@ -101,7 +101,7 @@ func (cd *ContextDecorator) WithValues(ctx context.Context, operation string, va
 }
 
 // GetPerformanceStats returns performance statistics
-func (cd *ContextDecorator) GetPerformanceStats() map[string]interface{} {
+func (cd *ContextDecorator) GetPerformanceStats() map[string]any {
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
@@ -113,11 +113,11 @@ func (cd *ContextDecorator) GetPerformanceStats() map[string]interface{} {
 }
 
 // GetOptimizationStats returns optimization statistics
-func (cd *ContextDecorator) GetOptimizationStats() map[string]interface{} {
+func (cd *ContextDecorator) GetOptimizationStats() map[string]any {
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"context_decorator_enabled": true,
 		"performance_tracking":      true,
 		"context_pooling":           true,
@@ -242,13 +242,13 @@ func (pt *PerformanceTracker) Track(operation string, duration time.Duration, er
 }
 
 // GetStats returns performance statistics
-func (pt *PerformanceTracker) GetStats() map[string]interface{} {
+func (pt *PerformanceTracker) GetStats() map[string]any {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
 
-	stats := make(map[string]interface{})
+	stats := make(map[string]any)
 	for operation, opStats := range pt.operations {
-		stats[operation] = map[string]interface{}{
+		stats[operation] = map[string]any{
 			"count":       opStats.Count,
 			"total_time":  opStats.TotalTime.String(),
 			"avg_time":    (opStats.TotalTime / time.Duration(opStats.Count)).String(),
@@ -332,11 +332,11 @@ func (cp *ContextPool) Put(ctx context.Context) {
 }
 
 // GetStats returns pool statistics
-func (cp *ContextPool) GetStats() map[string]interface{} {
+func (cp *ContextPool) GetStats() map[string]any {
 	cp.mu.RLock()
 	defer cp.mu.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"pool_size":  cp.size,
 		"pool_usage": len(cp.pool),
 		"created":    cp.created,

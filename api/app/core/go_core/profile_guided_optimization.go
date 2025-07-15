@@ -101,9 +101,9 @@ type OptimizationConditions struct {
 type OptimizationAction struct {
 	Type      string                 `json:"type"`
 	Parameter string                 `json:"parameter"`
-	Value     interface{}            `json:"value"`
+	Value     any            `json:"value"`
 	Priority  int                    `json:"priority"`
-	Metadata  map[string]interface{} `json:"metadata"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
 // ProfileGuidedMetrics tracks optimization metrics

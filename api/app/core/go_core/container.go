@@ -330,11 +330,11 @@ func (c *Container) TrackPerformance(name string, fn func() error) error {
 }
 
 // OptimizeObject optimizes an object using the container's performance facade
-func (c *Container) OptimizeObject(obj interface{}) error {
+func (c *Container) OptimizeObject(obj any) error {
 	return c.performanceFacade.Optimize(obj)
 }
 
 // GetPerformanceStats returns performance statistics
-func (c *Container) GetPerformanceStats() map[string]interface{} {
+func (c *Container) GetPerformanceStats() map[string]any {
 	return c.performanceFacade.GetStats()
 }

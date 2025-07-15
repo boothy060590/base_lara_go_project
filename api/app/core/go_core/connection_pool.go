@@ -14,7 +14,7 @@ type ConnectionPool struct {
 	maxOpen     int
 	maxIdle     int
 	maxLifetime time.Duration
-	config      map[string]interface{}
+	config      map[string]any
 	stats       *ConnectionPoolStats
 	statsMutex  sync.RWMutex
 }
@@ -33,7 +33,7 @@ type ConnectionPoolStats struct {
 }
 
 // NewConnectionPool creates a new connection pool with configuration
-func NewConnectionPool(config map[string]interface{}) *ConnectionPool {
+func NewConnectionPool(config map[string]any) *ConnectionPool {
 	pool := &ConnectionPool{
 		enabled:     true,
 		maxOpen:     25, // Default max open connections
@@ -100,11 +100,11 @@ func (cp *ConnectionPool) updateStats(db *sql.DB) {
 }
 
 // GetStats returns connection pool statistics
-func (cp *ConnectionPool) GetStats() map[string]interface{} {
+func (cp *ConnectionPool) GetStats() map[string]any {
 	cp.statsMutex.RLock()
 	defer cp.statsMutex.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":              cp.enabled,
 		"max_open":             cp.maxOpen,
 		"max_idle":             cp.maxIdle,

@@ -16,7 +16,7 @@ type RepositoryBatchProcessor[T any] struct {
 	bufferMutex sync.Mutex
 	flushTicker *time.Ticker
 	done        chan bool
-	config      map[string]interface{}
+	config      map[string]any
 	stats       *BatchProcessorStats
 	statsMutex  sync.RWMutex
 }
@@ -37,7 +37,7 @@ type BatchProcessorStats struct {
 }
 
 // NewRepositoryBatchProcessor creates a new repository batch processor
-func NewRepositoryBatchProcessor[T any](config map[string]interface{}) *RepositoryBatchProcessor[T] {
+func NewRepositoryBatchProcessor[T any](config map[string]any) *RepositoryBatchProcessor[T] {
 	batchSize := 100 // Default
 	if size, ok := config["repository_batch_size"].(int); ok {
 		batchSize = size
@@ -166,11 +166,11 @@ func (rbp *RepositoryBatchProcessor[T]) IsEnabled() bool {
 }
 
 // GetStats returns batch processor statistics
-func (rbp *RepositoryBatchProcessor[T]) GetStats() map[string]interface{} {
+func (rbp *RepositoryBatchProcessor[T]) GetStats() map[string]any {
 	rbp.statsMutex.RLock()
 	defer rbp.statsMutex.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":           rbp.enabled,
 		"batch_size":        rbp.batchSize,
 		"buffer_size":       rbp.stats.BufferSize,
@@ -185,7 +185,7 @@ func (rbp *RepositoryBatchProcessor[T]) GetStats() map[string]interface{} {
 // RepositoryAsyncProcessor handles async operations for repository
 type RepositoryAsyncProcessor[T any] struct {
 	enabled    bool
-	config     map[string]interface{}
+	config     map[string]any
 	stats      *AsyncProcessorStats
 	statsMutex sync.RWMutex
 }
@@ -199,7 +199,7 @@ type AsyncProcessorStats struct {
 }
 
 // NewRepositoryAsyncProcessor creates a new repository async processor
-func NewRepositoryAsyncProcessor[T any](config map[string]interface{}) *RepositoryAsyncProcessor[T] {
+func NewRepositoryAsyncProcessor[T any](config map[string]any) *RepositoryAsyncProcessor[T] {
 	enabled := true
 	if enabledVal, ok := config["repository_async_enabled"].(bool); ok {
 		enabled = enabledVal
@@ -256,11 +256,11 @@ func (rap *RepositoryAsyncProcessor[T]) IsEnabled() bool {
 }
 
 // GetStats returns async processor statistics
-func (rap *RepositoryAsyncProcessor[T]) GetStats() map[string]interface{} {
+func (rap *RepositoryAsyncProcessor[T]) GetStats() map[string]any {
 	rap.statsMutex.RLock()
 	defer rap.statsMutex.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":              rap.enabled,
 		"operations_queued":    rap.stats.OperationsQueued,
 		"operations_completed": rap.stats.OperationsCompleted,
@@ -273,7 +273,7 @@ func (rap *RepositoryAsyncProcessor[T]) GetStats() map[string]interface{} {
 // RepositoryPipelineProcessor handles pipeline operations for repository
 type RepositoryPipelineProcessor struct {
 	enabled    bool
-	config     map[string]interface{}
+	config     map[string]any
 	stats      *PipelineProcessorStats
 	statsMutex sync.RWMutex
 }
@@ -286,7 +286,7 @@ type PipelineProcessorStats struct {
 }
 
 // NewRepositoryPipelineProcessor creates a new repository pipeline processor
-func NewRepositoryPipelineProcessor(config map[string]interface{}) *RepositoryPipelineProcessor {
+func NewRepositoryPipelineProcessor(config map[string]any) *RepositoryPipelineProcessor {
 	enabled := true
 	if enabledVal, ok := config["repository_pipeline_enabled"].(bool); ok {
 		enabled = enabledVal
@@ -315,11 +315,11 @@ func (rpp *RepositoryPipelineProcessor) IsEnabled() bool {
 }
 
 // GetStats returns pipeline processor statistics
-func (rpp *RepositoryPipelineProcessor) GetStats() map[string]interface{} {
+func (rpp *RepositoryPipelineProcessor) GetStats() map[string]any {
 	rpp.statsMutex.RLock()
 	defer rpp.statsMutex.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"enabled":           rpp.enabled,
 		"pipelines_created": rpp.stats.PipelinesCreated,
 		"items_processed":   rpp.stats.ItemsProcessed,

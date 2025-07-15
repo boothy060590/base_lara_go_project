@@ -150,7 +150,7 @@ func (p *DatabaseServiceProvider) Register(container *app_core.Container) error 
 	container.Singleton("database", func() (any, error) {
 		return nil, nil
 	})
-	container.Singleton("gorm.db", func() (any, error) {
+	container.Singleton("sql.db", func() (any, error) {
 		return nil, nil
 	})
 	return nil

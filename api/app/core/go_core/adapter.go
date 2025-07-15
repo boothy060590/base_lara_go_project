@@ -48,13 +48,13 @@ func SendMail(to []string, subject, body string) error {
 
 // MessageProcessorService interface for Laravel-style compatibility
 type MessageProcessorService interface {
-	Process(messageType string, data map[string]interface{}) error
+	Process(messageType string, data map[string]any) error
 }
 
 // Basic message processor implementation
 type BasicMessageProcessor struct{}
 
-func (m *BasicMessageProcessor) Process(messageType string, data map[string]interface{}) error {
+func (m *BasicMessageProcessor) Process(messageType string, data map[string]any) error {
 	// TODO: Implement actual message processing
 	fmt.Printf("Processing message type %s with data %+v\n", messageType, data)
 	return nil
