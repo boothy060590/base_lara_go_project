@@ -1,680 +1,576 @@
 # Developer Guide
 
-## Introduction
+## Getting Started
 
-This guide shows you how to use the Laravel-Inspired Go Framework to build high-performance applications with familiar Laravel-style APIs. The framework automatically optimizes your code without requiring any additional configuration.
-
-## Quick Start
-
-### **1. Basic Setup**
-
-```go
-// main.go
-package main
-
-import (
-    "your-project/api/app/core/laravel_core/facades"
-)
-
-func main() {
-    // Framework automatically initializes all optimizations
-    app := facades.App()
-    app.Run()
-}
-```
-
-### **2. Create Your First Controller**
-
-```go
-// app/http/controllers/user_controller.go
-package controllers
-
-import (
-    "your-project/api/app/core/laravel_core/facades"
-)
-
-type UserController struct {
-    userRepo *facades.Repository
-    eventDispatcher *facades.Event
-}
-
-func NewUserController() *UserController {
-    return &UserController{
-        userRepo: facades.Repository(),
-        eventDispatcher: facades.Event(),
-    }
-}
-
-func (c *UserController) Show(id uint) (*User, error) {
-    // Framework automatically optimizes this query
-    user, err := c.userRepo.Find(id)
-    if err != nil {
-        return nil, err
-    }
-    return user, nil
-}
-
-func (c *UserController) Store(request *CreateUserRequest) (*User, error) {
-    user := &User{
-        Name:  request.Name,
-        Email: request.Email,
-    }
-    
-    // Framework automatically optimizes this operation
-    if err := c.userRepo.Create(user); err != nil {
-        return nil, err
-    }
-    
-    // Framework automatically optimizes this event dispatch
-    c.eventDispatcher.Dispatch(&UserCreated{User: user})
-    
-    return user, nil
-}
-```
-
-### **3. Define Your Models**
-
-```go
-// app/models/user.go
-package models
-
-import (
-    "gorm.io/gorm"
-)
-
-type User struct {
-    ID        uint   `gorm:"primaryKey"`
-    Name      string `gorm:"not null"`
-    Email     string `gorm:"unique;not null"`
-    CreatedAt time.Time
-    UpdatedAt time.Time
-}
-
-// Framework automatically provides optimized repository methods
-func (u *User) TableName() string {
-    return "users"
-}
-```
-
-### **4. Create Events and Listeners**
-
-```go
-// app/events/user_created.go
-package events
-
-type UserCreated struct {
-    User *User
-}
-
-// app/listeners/send_welcome_email.go
-package listeners
-
-import (
-    "your-project/api/app/core/laravel_core/facades"
-)
-
-type SendWelcomeEmail struct {
-    mailer *facades.Mail
-}
-
-func NewSendWelcomeEmail() *SendWelcomeEmail {
-    return &SendWelcomeEmail{
-        mailer: facades.Mail(),
-    }
-}
-
-func (l *SendWelcomeEmail) Handle(event *UserCreated) error {
-    // Framework automatically optimizes this email sending
-    return l.mailer.Send("welcome", event.User.Email, map[string]interface{}{
-        "user": event.User,
-    })
-}
-```
+This guide covers the essential patterns and best practices for building applications with the Laravel-inspired Go framework.
 
 ## Core Concepts
 
-### **1. Repository Pattern**
+### Canonical APIs
 
-The framework provides an optimized repository pattern that automatically uses goroutines and caching.
+The framework uses single, canonical constructors for all core services:
 
 ```go
-// Get repository instance
-userRepo := facades.Repository()
+import go_core "base_lara_go_project/app/core/go_core"
 
-// Basic operations (automatically optimized)
-user, err := userRepo.Find(1)
-users, err := userRepo.FindMany([]uint{1, 2, 3})
-err := userRepo.Create(&User{Name: "John", Email: "john@example.com"})
-err := userRepo.Update(user)
-err := userRepo.Delete(1)
+// Repository with automatic optimization selection
+repo := go_core.NewRepository[User](db)
 
-// Async operations (automatic goroutine optimization)
-userChan := userRepo.FindAsync(1)
-usersChan := userRepo.FindManyAsync([]uint{1, 2, 3})
-errChan := userRepo.CreateAsync(&User{Name: "John", Email: "john@example.com"})
+// Event bus with work stealing pool integration
+eventBus := go_core.NewEventBus[any](wsp, ca, pgo)
 
-// Wait for async results
-select {
-case result := <-userChan:
-    if result.Error != nil {
-        // Handle error
-    }
-    user = result.Data
-case <-time.After(5 * time.Second):
-    // Handle timeout
+// Cache with context-aware operations
+cache := go_core.NewLocalCache[any]()
+
+// Job dispatcher with goroutine pool management
+dispatcher := go_core.NewJobDispatcher[any](queue, wsp, ca, pgo)
+
+// HTTP optimizer with FastHTTP integration
+optimizer := go_core.NewHTTPOptimizer(config)
+```
+
+### Smart Query System
+
+The repository automatically selects the optimal query path:
+
+```go
+// FastPath: Direct queries for simple operations
+user, err := repo.Find(1)
+user, err := repo.FindBy("email", "user@example.com")
+
+// BalancedPath: Prepared statements for complex queries
+users, err := repo.Where(map[string]any{"active": true}).Get()
+count, err := repo.Where(map[string]any{"role": "admin"}).Count()
+
+// ComplexPath: Advanced operations
+err := repo.Complex().BulkCreate(users)
+err := repo.Complex().Transaction(func(tx Repository[User]) error {
+    // Transaction operations
+    return nil
+})
+```
+
+## Service Provider System
+
+The framework uses a comprehensive service provider system for dependency injection:
+
+### Application Bootstrap
+
+```go
+// Initialize the global service container
+container := go_core.NewContainer()
+
+// Create provider manager
+providerManager := laravel_providers.NewProviderManager(container)
+
+// Register the main AppServiceProvider
+appProvider := &providers.AppServiceProvider{}
+if err := providerManager.Register(appProvider); err != nil {
+    panic(err)
+}
+
+// Boot all providers
+if err := providerManager.Boot(); err != nil {
+    panic(err)
 }
 ```
 
-### **2. Event System**
-
-High-performance event dispatching with automatic optimization.
+### Service Resolution
 
 ```go
-// Get event dispatcher
-eventDispatcher := facades.Event()
+// Resolve services from container
+repoInstance, err := container.Resolve("repository.user")
+userRepo := repoInstance.(*repositories.UserRepository)
 
-// Dispatch events (automatically optimized)
-err := eventDispatcher.Dispatch(&UserCreated{User: user})
-err := eventDispatcher.DispatchAsync(&UserCreated{User: user})
+cacheInstance, err := container.Resolve("cache")
+cache := cacheInstance.(go_core.Cache[any])
 
-// Listen for events
-eventDispatcher.Listen("user.created", func(event *UserCreated) error {
-    // Handle event
+eventDispatcher, err := container.Resolve("event_dispatcher")
+dispatcher := eventDispatcher.(go_core.EventDispatcher[any])
+```
+
+## Repository Usage
+
+### Basic CRUD Operations
+
+```go
+type User struct {
+    ID        uint      `json:"id" db:"id"`
+    Name      string    `json:"name" db:"name"`
+    Email     string    `json:"email" db:"email"`
+    CreatedAt time.Time `json:"created_at" db:"created_at"`
+    UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+    DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+
+// Implement required methods
+func (u *User) GetTableName() string { return "users" }
+func (u *User) GetPrimaryKey() string { return "id" }
+func (u *User) GetFillableFields() []string { return []string{"name", "email"} }
+
+// Create repository
+repo := go_core.NewRepository[User](db)
+
+// Create
+user := &User{Name: "John Doe", Email: "john@example.com"}
+err := repo.Create(user)
+
+// Read
+user, err := repo.Find(1)
+user, err := repo.FindBy("email", "john@example.com")
+
+// Update
+user.Name = "Jane Doe"
+err := repo.Update(user)
+
+// Delete (soft delete)
+err := repo.Delete(1)
+```
+
+### Query Building
+
+```go
+// Simple conditions
+users, err := repo.Where(map[string]any{
+    "active": true,
+    "role": "admin",
+}).Get()
+
+// Complex queries with operators
+users, err := repo.Where(map[string]any{
+    "created_at_gt": time.Now().AddDate(0, 0, -7),
+    "email_like": "%@example.com",
+}).Get()
+
+// Pagination
+users, err := repo.Where(map[string]any{}).
+    Limit(10).
+    Offset(20).
+    Get()
+
+// Ordering
+users, err := repo.Where(map[string]any{}).
+    OrderBy("created_at", "desc").
+    Get()
+```
+
+### Context-Aware Operations
+
+```go
+// Context with timeout
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+// Context-aware repository
+ctxRepo := repo.WithContext(ctx)
+user, err := ctxRepo.Find(1)
+
+// Context-aware event dispatching
+err := eventBus.WithContext(ctx).Dispatch("user.created", user)
+```
+
+## FastHTTP Integration
+
+The framework uses FastHTTP for high-performance HTTP handling with Gin compatibility:
+
+### Router Setup
+
+```go
+// RouterServiceProvider automatically sets up FastHTTP integration
+router := gin.Default()
+
+// Add routes
+router.GET("/api/users", func(c *gin.Context) {
+    users, _ := repo.FindAll()
+    c.JSON(200, users)
+})
+
+// FastHTTP server is automatically configured
+// Routes are loaded from api/routes/ directory
+```
+
+### HTTP Optimization Configuration
+
+```go
+// HTTP optimization settings in config/http.go
+httpConfig := map[string]any{
+    "enable_fasthttp":        true,
+    "read_timeout":          30,
+    "write_timeout":         30,
+    "max_connections":       15000,
+    "enable_compression":    true,
+    "zero_copy_enabled":     true,
+}
+```
+
+## Event System
+
+### Event Dispatching
+
+```go
+// Create event bus with optimizations
+eventBus := go_core.NewEventBus[any](wsp, ca, pgo)
+
+// Register listeners
+eventBus.AddListener("user.created", func(event interface{}) error {
+    user := event.(*User)
+    // Handle user creation
     return nil
 })
 
-// Multiple listeners (processed in parallel)
-eventDispatcher.Listen("user.created", &SendWelcomeEmail{})
-eventDispatcher.Listen("user.created", &LogUserCreation{})
-eventDispatcher.Listen("user.created", &UpdateUserCount{})
+// Dispatch events
+err := eventBus.Dispatch("user.created", user)
+
+// Async dispatch
+err := eventBus.DispatchAsync("user.created", user)
 ```
 
-### **3. Cache System**
-
-Multi-level caching with automatic optimization.
+### Event Store
 
 ```go
-// Get cache instance
-cache := facades.Cache()
+// Store events for later retrieval
+eventStore := go_core.NewMemoryEventStore[any]()
 
-// Basic operations (automatically optimized)
-err := cache.Set("user:1", user, 3600)
-user, err := cache.Get("user:1")
+// Store event
+err := eventStore.Store("user.created", user)
+
+// Retrieve events
+events, err := eventStore.GetByEventName("user.created")
+events, err := eventStore.GetByTimeRange(start, end)
+```
+
+## Cache System
+
+### Basic Caching
+
+```go
+// Create cache
+cache := go_core.NewLocalCache[any]()
+
+// Set value
+err := cache.Set("user:1", user, 30*time.Minute)
+
+// Get value
+var user User
+err := cache.Get("user:1", &user)
+
+// Delete value
 err := cache.Delete("user:1")
 
-// Multi-level caching (memory -> Redis -> Database)
-user, err := cache.Remember("user:1", 3600, func() (*User, error) {
-    return userRepo.Find(1)
-})
-
-// Cache tags for easy invalidation
-err := cache.Tags("users").Set("user:1", user)
-cache.Tags("users").Flush() // Invalidate all user cache
+// Check existence
+exists, err := cache.Exists("user:1")
 ```
 
-### **4. Queue System**
-
-Background job processing with automatic scaling.
+### Advanced Caching
 
 ```go
-// Get queue instance
-queue := facades.Queue()
+// Get or set pattern
+user, err := cache.GetOrSet("user:1", func() (*User, error) {
+    return repo.Find(1)
+}, 30*time.Minute)
 
-// Push jobs (automatically optimized)
-err := queue.Push(&SendEmailJob{Email: "user@example.com"})
-err := queue.PushAsync(&ProcessOrderJob{OrderID: 123})
+// Batch operations
+err := cache.SetMany(map[string]interface{}{
+    "user:1": user1,
+    "user:2": user2,
+}, 30*time.Minute)
 
-// Process jobs
-queue.Process(&SendEmailJob{}, func(job *SendEmailJob) error {
-    // Process job
-    return nil
-})
-
-// Job with retry logic
-type SendEmailJob struct {
-    Email string
-    Retries int
-}
-
-func (j *SendEmailJob) Handle() error {
-    // Send email logic
-    return nil
-}
-
-func (j *SendEmailJob) Failed(err error) {
-    // Handle failed job
-    if j.Retries < 3 {
-        j.Retries++
-        facades.Queue().Push(j)
-    }
-}
+// Pattern deletion
+err := cache.DeletePattern("user:*")
 ```
 
-### **5. Mail System**
+## Job System
 
-Asynchronous email processing with template support.
-
-```go
-// Get mailer instance
-mailer := facades.Mail()
-
-// Send emails (automatically optimized)
-err := mailer.Send("welcome", "user@example.com", map[string]interface{}{
-    "user": user,
-})
-
-// Send with attachments
-err := mailer.SendWithAttachments("invoice", "user@example.com", map[string]interface{}{
-    "invoice": invoice,
-}, []string{"invoice.pdf"})
-
-// Queue emails for background processing
-err := mailer.Queue("welcome", "user@example.com", map[string]interface{}{
-    "user": user,
-})
-```
-
-## Advanced Usage
-
-### **1. Custom Repositories**
+### Job Dispatching
 
 ```go
-// app/repositories/user_repository.go
-package repositories
+// Create job dispatcher with optimizations
+dispatcher := go_core.NewJobDispatcher[any](queue, wsp, ca, pgo)
 
-import (
-    "your-project/api/app/core/go_core"
-)
-
-type UserRepository struct {
-    *go_core.Repository[User]
-}
-
-func NewUserRepository() *UserRepository {
-    return &UserRepository{
-        Repository: go_core.NewRepository[User](db),
-    }
-}
-
-// Custom methods with automatic optimization
-func (r *UserRepository) FindByEmail(email string) (*User, error) {
-    var user User
-    err := r.db.Where("email = ?", email).First(&user).Error
-    return &user, err
-}
-
-func (r *UserRepository) FindActiveUsers() ([]*User, error) {
-    var users []*User
-    err := r.db.Where("active = ?", true).Find(&users).Error
-    return users, err
-}
-```
-
-### **2. Custom Events**
-
-```go
-// app/events/order_placed.go
-package events
-
-type OrderPlaced struct {
-    Order *Order
-    User  *User
-}
-
-// app/listeners/process_order.go
-package listeners
-
-type ProcessOrder struct {
-    orderProcessor *OrderProcessor
-}
-
-func (l *ProcessOrder) Handle(event *OrderPlaced) error {
-    // Process order with automatic optimization
-    return l.orderProcessor.Process(event.Order)
-}
-```
-
-### **3. Custom Jobs**
-
-```go
-// app/jobs/send_email_job.go
-package jobs
-
-import (
-    "your-project/api/app/core/go_core"
-)
-
-type SendEmailJob struct {
-    go_core.Job
-    Email   string
+// Define job
+type EmailJob struct {
+    To      string
     Subject string
     Body    string
 }
 
-func (j *SendEmailJob) Handle() error {
+func (j *EmailJob) Execute() error {
     // Send email logic
     return nil
 }
 
-func (j *SendEmailJob) Failed(err error) {
-    // Handle failure
-    log.Printf("Failed to send email: %v", err)
-}
-```
+// Dispatch job
+err := dispatcher.Dispatch(&EmailJob{
+    To:      "user@example.com",
+    Subject: "Welcome",
+    Body:    "Welcome to our platform!",
+})
 
-### **4. Custom Cache Drivers**
-
-```go
-// app/cache/redis_cache.go
-package cache
-
-import (
-    "your-project/api/app/core/go_core"
-)
-
-type RedisCache struct {
-    *go_core.Cache[any]
-    client *redis.Client
-}
-
-func NewRedisCache() *RedisCache {
-    return &RedisCache{
-        Cache:  go_core.NewCache[any](),
-        client: redis.NewClient(&redis.Options{}),
-    }
-}
-
-func (c *RedisCache) Get(key string) (any, error) {
-    // Custom Redis implementation with automatic optimization
-    return c.client.Get(key).Result()
-}
+// Async dispatch
+err := dispatcher.DispatchAsync(&EmailJob{...})
 ```
 
 ## Configuration
 
-### **1. Environment Configuration**
+### Environment Variables
 
 ```bash
-# .env
-APP_NAME="My Application"
-APP_ENV=production
-APP_DEBUG=false
-
 # Database
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
+DB_HOST=localhost
 DB_PORT=3306
 DB_DATABASE=myapp
 DB_USERNAME=root
-DB_PASSWORD=
+DB_PASSWORD=password
 
 # Cache
 CACHE_DRIVER=redis
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
+CACHE_HOST=localhost
+CACHE_PORT=6379
 
-# Queue
-QUEUE_CONNECTION=redis
-QUEUE_DRIVER=redis
+# HTTP
+HTTP_ENABLE_FASTHTTP=true
+HTTP_MAX_CONNECTIONS=15000
+HTTP_READ_TIMEOUT=30
 
-# Mail
-MAIL_DRIVER=smtp
-MAIL_HOST=smtp.mailtrap.io
-MAIL_PORT=2525
-MAIL_USERNAME=null
-MAIL_PASSWORD=null
-MAIL_ENCRYPTION=null
+# Goroutine
+GOROUTINE_MAX_WORKERS=100
+GOROUTINE_QUEUE_SIZE=1000
 ```
 
-### **2. Service Providers**
+### Config Files
 
 ```go
-// app/providers/app_service_provider.go
-package providers
+// Load configuration
+dbConfig, err := config.Load("database")
+cacheConfig, err := config.Load("cache")
+httpConfig, err := config.Load("http")
+goroutineConfig, err := config.Load("goroutine")
+```
 
-import (
-    "your-project/api/app/core/laravel_core/providers"
-)
+### Using Config Facade
 
-type AppServiceProvider struct {
-    providers.BaseServiceProvider
+```go
+import facades_core "base_lara_go_project/app/core/laravel_core/facades"
+
+// Using the config facade
+config := facades_core.Config()
+appName := config.GetString("app.name")
+
+// Or use the global functions
+appName := facades_core.GetString("app.name")
+debugMode := facades_core.GetBool("app.debug")
+maxConnections := facades_core.GetInt("http.max_connections")
+```
+
+## HTTP Controllers
+
+### Base Controller
+
+```go
+import laravel_http "base_lara_go_project/app/core/laravel_core/http"
+
+type UserController struct {
+    laravel_http.BaseController
+    userRepo *repositories.UserRepository
 }
 
-func (p *AppServiceProvider) Register(container *go_core.Container) error {
-    // Register your services
-    container.Singleton("user.repository", func() (any, error) {
-        return repositories.NewUserRepository(), nil
-    })
+func NewUserController(userRepo *repositories.UserRepository) *UserController {
+    return &UserController{
+        userRepo: userRepo,
+    }
+}
+
+func (c *UserController) Index(ctx *gin.Context) {
+    users, err := c.userRepo.FindAll(1, 10)
+    if err != nil {
+        c.ErrorResponse(ctx, http.StatusInternalServerError, "Failed to fetch users", err)
+        return
+    }
     
-    return nil
-}
-
-func (p *AppServiceProvider) Boot(container *go_core.Container) error {
-    // Boot your services
-    return nil
+    c.SuccessResponse(ctx, users, "Users retrieved successfully")
 }
 ```
 
-### **3. Middleware**
+## Middleware
+
+### JWT Middleware
 
 ```go
-// app/http/middleware/auth_middleware.go
-package middleware
-
-import (
-    "your-project/api/app/core/laravel_core/facades"
-)
-
-type AuthMiddleware struct{}
-
-func (m *AuthMiddleware) Handle(request *http.Request, next func() *http.Response) *http.Response {
-    // Authentication logic
-    token := request.Header.Get("Authorization")
-    if token == "" {
-        return &http.Response{
-            StatusCode: 401,
-            Body:       strings.NewReader("Unauthorized"),
+func JWTMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        token := c.GetHeader("Authorization")
+        if token == "" {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "No token provided"})
+            c.Abort()
+            return
         }
+        
+        // Validate token
+        // Set user in context
+        c.Next()
     }
-    
-    // Continue to next middleware/controller
-    return next()
 }
 ```
 
-## Performance Monitoring
+## Testing
 
-### **1. Built-in Metrics**
+### Unit Tests
 
 ```go
-// Get performance metrics
-metrics := facades.Performance()
-
-// View current metrics
-stats := metrics.GetStats()
-fmt.Printf("Operations per second: %d\n", stats.OperationsPerSecond)
-fmt.Printf("Average response time: %v\n", stats.AverageResponseTime)
-fmt.Printf("Memory usage: %d MB\n", stats.MemoryUsage)
-fmt.Printf("Goroutine count: %d\n", stats.GoroutineCount)
+func TestUserRepository_Find(t *testing.T) {
+    // Create mock database
+    db, mock, err := sqlmock.New()
+    require.NoError(t, err)
+    defer db.Close()
+    
+    // Create repository
+    repo := go_core.NewRepository[User](db)
+    
+    // Set up expectations
+    mock.ExpectQuery("SELECT (.+) FROM users WHERE id = (.+) AND deleted_at IS NULL").
+        WithArgs(1).
+        WillReturnRows(sqlmock.NewRows([]string{"id", "name", "email"}).
+            AddRow(1, "John Doe", "john@example.com"))
+    
+    // Execute test
+    user, err := repo.Find(1)
+    
+    // Assertions
+    require.NoError(t, err)
+    assert.Equal(t, "John Doe", user.Name)
+    assert.NoError(t, mock.ExpectationsWereMet())
+}
 ```
 
-### **2. Custom Metrics**
+### Integration Tests
 
 ```go
-// Track custom metrics
-metrics := facades.Performance()
-
-// Increment counter
-metrics.Increment("user.registrations")
-
-// Record timing
-metrics.Timing("database.query", 150*time.Millisecond)
-
-// Set gauge
-metrics.Gauge("active.users", 1250)
-```
-
-### **3. Health Checks**
-
-```go
-// Health check endpoint
-func HealthCheck(w http.ResponseWriter, r *http.Request) {
-    health := facades.App().Health()
+func TestUserRepositoryIntegration(t *testing.T) {
+    // Use real database with config-driven connection
+    dbConfig := config.DatabaseConfig()
+    dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+        dbConfig["username"], dbConfig["password"],
+        dbConfig["host"], dbConfig["port"], dbConfig["database"])
     
-    if health.Status == "healthy" {
-        w.WriteHeader(200)
-    } else {
-        w.WriteHeader(503)
-    }
+    db, err := sql.Open("mysql", dsn)
+    require.NoError(t, err)
+    defer db.Close()
     
-    json.NewEncoder(w).Encode(health)
+    // Create repository
+    repo := go_core.NewRepository[User](db)
+    
+    // Create test user
+    user := &User{Name: "Test User", Email: "test@example.com"}
+    err = repo.Create(user)
+    require.NoError(t, err)
+    
+    // Test find
+    found, err := repo.Find(user.ID)
+    require.NoError(t, err)
+    assert.Equal(t, user.Name, found.Name)
+    
+    // Cleanup
+    repo.Delete(user.ID)
 }
 ```
 
 ## Best Practices
 
-### **1. Repository Pattern**
-
+### 1. Use Canonical Constructors
+Always use the single canonical constructor for each service type:
 ```go
-// ✅ Good: Use repository pattern
-func (c *UserController) Show(id uint) (*User, error) {
-    return c.userRepo.Find(id)
-}
+// ✅ Correct
+repo := go_core.NewRepository[User](db)
+eventBus := go_core.NewEventBus[any](wsp, ca, pgo)
 
-// ❌ Bad: Direct database access
-func (c *UserController) Show(id uint) (*User, error) {
-    var user User
-    err := c.db.First(&user, id).Error
-    return &user, err
-}
+// ❌ Avoid legacy constructors
+// repo := go_core.NewInfrastructureOptimizedRepository[User](db)
 ```
 
-### **2. Event-Driven Architecture**
-
+### 2. Leverage Smart Query System
+Let the framework automatically select the optimal query path:
 ```go
-// ✅ Good: Use events for side effects
-func (c *UserController) Store(request *CreateUserRequest) (*User, error) {
-    user := &User{Name: request.Name, Email: request.Email}
-    
-    if err := c.userRepo.Create(user); err != nil {
-        return nil, err
-    }
-    
-    // Dispatch event for side effects
-    c.eventDispatcher.Dispatch(&UserCreated{User: user})
-    
-    return user, nil
-}
-
-// ❌ Bad: Handle side effects in controller
-func (c *UserController) Store(request *CreateUserRequest) (*User, error) {
-    user := &User{Name: request.Name, Email: request.Email}
-    
-    if err := c.userRepo.Create(user); err != nil {
-        return nil, err
-    }
-    
-    // Side effects in controller (bad)
-    c.mailer.SendWelcomeEmail(user)
-    c.logger.LogUserCreation(user)
-    c.analytics.TrackUserRegistration(user)
-    
-    return user, nil
-}
+// ✅ Let framework choose optimal path
+user, err := repo.Find(1)                    // FastPath
+users, err := repo.Where(conds).Get()        // BalancedPath
+err := repo.Complex().BulkCreate(users)      // ComplexPath
 ```
 
-### **3. Async Processing**
-
+### 3. Use Context for Timeouts
+Always provide context for operations that might take time:
 ```go
-// ✅ Good: Use async for non-critical operations
-func (c *OrderController) Store(request *CreateOrderRequest) (*Order, error) {
-    order := &Order{Items: request.Items}
-    
-    if err := c.orderRepo.Create(order); err != nil {
-        return nil, err
-    }
-    
-    // Async processing for non-critical operations
-    c.queue.PushAsync(&ProcessOrderJob{OrderID: order.ID})
-    c.eventDispatcher.DispatchAsync(&OrderPlaced{Order: order})
-    
-    return order, nil
-}
-```
-
-### **4. Caching Strategy**
-
-```go
-// ✅ Good: Use cache for expensive operations
-func (c *UserController) Index() ([]*User, error) {
-    return c.cache.Remember("users.all", 3600, func() ([]*User, error) {
-        return c.userRepo.FindAll()
-    })
-}
-
-// ✅ Good: Invalidate cache on updates
-func (c *UserController) Store(request *CreateUserRequest) (*User, error) {
-    user := &User{Name: request.Name, Email: request.Email}
-    
-    if err := c.userRepo.Create(user); err != nil {
-        return nil, err
-    }
-    
-    // Invalidate cache
-    c.cache.Tags("users").Flush()
-    
-    return user, nil
-}
-```
-
-## Troubleshooting
-
-### **1. Performance Issues**
-
-```go
-// Check if optimizations are enabled
-if facades.Performance().IsOptimized() {
-    fmt.Println("Optimizations are enabled")
-} else {
-    fmt.Println("Optimizations are disabled")
-}
-
-// Get detailed performance stats
-stats := facades.Performance().GetDetailedStats()
-fmt.Printf("Cache hit rate: %.2f%%\n", stats.CacheHitRate)
-fmt.Printf("Error rate: %.2f%%\n", stats.ErrorRate)
-```
-
-### **2. Memory Issues**
-
-```go
-// Check memory usage
-memory := facades.Performance().GetMemoryStats()
-fmt.Printf("Heap usage: %d MB\n", memory.HeapUsage)
-fmt.Printf("Goroutine count: %d\n", memory.GoroutineCount)
-
-// Force garbage collection if needed
-facades.Performance().ForceGC()
-```
-
-### **3. Context Timeouts**
-
-```go
-// Check context configuration
-config := facades.Config().Get("context")
-timeout := config["default_timeout"].(time.Duration)
-fmt.Printf("Default timeout: %v\n", timeout)
-
-// Increase timeout for specific operations
-ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+// ✅ Context-aware operations
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
-
-user, err := c.userRepo.FindWithContext(ctx, 1)
+result, err := repo.WithContext(ctx).Find(1)
 ```
 
-## Next Steps
+### 4. Configure via Environment
+Use environment variables and config files for customization:
+```go
+// ✅ Environment-driven configuration
+// Set HTTP_MAX_CONNECTIONS=15000 in .env
+maxConn := facades_core.GetInt("http.max_connections", 10000)
+```
 
-- [Configuration Reference](./CONFIGURATION.md) - All configuration options
-- [Examples and Tutorials](./EXAMPLES.md) - Real-world examples
-- [Performance Optimizations](./PERFORMANCE_OPTIMIZATIONS.md) - How optimizations work
-- [Core Architecture](./CORE_ARCHITECTURE.md) - Detailed architecture 
+### 5. Use Service Providers
+Register services through the service provider system:
+```go
+// ✅ Service provider registration
+container.Singleton("repository.user", func() (any, error) {
+    return repositories.NewUserRepository(repo, cache), nil
+})
+```
+
+## Common Patterns
+
+### Repository Pattern with Cache
+
+```go
+type UserRepository struct {
+    repository go_core.Repository[models.User]
+    cache      go_core.Cache[models.User]
+}
+
+func (r *UserRepository) FindWithCache(id uint) (*models.User, error) {
+    // Check cache first
+    if cached, err := r.cache.Get(fmt.Sprintf("user:%d", id)); err == nil {
+        return cached, nil
+    }
+    
+    // Use fast path for database lookup
+    user, err := r.repository.Find(id)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Cache the result
+    if user != nil {
+        r.cache.Set(fmt.Sprintf("user:%d", id), user, 5*time.Minute)
+    }
+    
+    return user, nil
+}
+```
+
+### Event-Driven Architecture
+
+```go
+// Define event
+type UserCreated struct {
+    User *models.User
+}
+
+func (e *UserCreated) GetName() string { return "user.created" }
+func (e *UserCreated) GetData() interface{} { return e.User }
+
+// Register listener
+eventBus.AddListener("user.created", func(event interface{}) error {
+    user := event.(*models.User)
+    // Send welcome email
+    return nil
+})
+
+// Dispatch event
+err := eventBus.Dispatch("user.created", &UserCreated{User: user})
+``` 

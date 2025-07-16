@@ -22,7 +22,7 @@ type EloquentModel[T any] struct {
 
 // NewEloquentModel creates a new Eloquent model
 func NewEloquentModel[T any](db *sql.DB, wsp *app_core.WorkStealingPool[any], ca *app_core.CustomAllocator[any], pgo *app_core.ProfileGuidedOptimizer[any]) *EloquentModel[T] {
-	repo := app_core.NewRepository[T](db, wsp, ca, pgo)
+	repo := app_core.NewRepository[T](db)
 
 	return &EloquentModel[T]{
 		repository:  repo,
@@ -89,7 +89,7 @@ func (m *EloquentModel[T]) Find(id uint) (*T, error) {
 
 // FindWithContext finds a model by ID with context
 func (m *EloquentModel[T]) FindWithContext(ctx context.Context, id uint) (*T, error) {
-	return m.repository.FindWithContext(ctx, id)
+	return m.repository.WithContext(ctx).Find(id)
 }
 
 // FindBy finds a model by field and value
@@ -99,17 +99,17 @@ func (m *EloquentModel[T]) FindBy(field string, value interface{}) (*T, error) {
 
 // FindByWithContext finds a model by field and value with context
 func (m *EloquentModel[T]) FindByWithContext(ctx context.Context, field string, value interface{}) (*T, error) {
-	return m.repository.FindByWithContext(ctx, field, value)
+	return m.repository.WithContext(ctx).FindBy(field, value)
 }
 
 // All gets all models
 func (m *EloquentModel[T]) All() ([]T, error) {
-	return m.repository.FindAll()
+	return m.repository.Where(map[string]any{}).Get()
 }
 
 // AllWithContext gets all models with context
 func (m *EloquentModel[T]) AllWithContext(ctx context.Context) ([]T, error) {
-	return m.repository.FindAllWithContext(ctx)
+	return m.repository.WithContext(ctx).Where(map[string]any{}).Get()
 }
 
 // Create creates a new model
@@ -129,7 +129,7 @@ func (m *EloquentModel[T]) CreateWithContext(ctx context.Context, model *T) erro
 		m.setTimestamps(model, true)
 	}
 
-	return m.repository.CreateWithContext(ctx, model)
+	return m.repository.WithContext(ctx).Create(model)
 }
 
 // Update updates a model
@@ -149,7 +149,7 @@ func (m *EloquentModel[T]) UpdateWithContext(ctx context.Context, model *T) erro
 		m.setTimestamps(model, false)
 	}
 
-	return m.repository.UpdateWithContext(ctx, model)
+	return m.repository.WithContext(ctx).Update(model)
 }
 
 // Delete deletes a model
@@ -159,27 +159,43 @@ func (m *EloquentModel[T]) Delete(id uint) error {
 
 // DeleteWithContext deletes a model with context
 func (m *EloquentModel[T]) DeleteWithContext(ctx context.Context, id uint) error {
-	return m.repository.DeleteWithContext(ctx, id)
+	return m.repository.WithContext(ctx).Delete(id)
 }
 
 // Where creates a query with conditions
-func (m *EloquentModel[T]) Where(conditions map[string]interface{}) app_core.Query[T] {
-	return m.repository.Where(conditions)
+func (m *EloquentModel[T]) Where(conditions map[string]interface{}) app_core.SmartQuery[T] {
+	conditionsAny := make(map[string]any)
+	for k, v := range conditions {
+		conditionsAny[k] = v
+	}
+	return m.repository.Where(conditionsAny)
 }
 
 // WhereWithContext creates a query with conditions and context
-func (m *EloquentModel[T]) WhereWithContext(ctx context.Context, conditions map[string]interface{}) app_core.Query[T] {
-	return m.repository.WhereWithContext(ctx, conditions)
+func (m *EloquentModel[T]) WhereWithContext(ctx context.Context, conditions map[string]interface{}) app_core.SmartQuery[T] {
+	conditionsAny := make(map[string]any)
+	for k, v := range conditions {
+		conditionsAny[k] = v
+	}
+	return m.repository.WithContext(ctx).Where(conditionsAny)
 }
 
 // WhereRaw creates a query with raw SQL
-func (m *EloquentModel[T]) WhereRaw(query string, args ...interface{}) app_core.Query[T] {
-	return m.repository.WhereRaw(query, args...)
+func (m *EloquentModel[T]) WhereRaw(query string, args ...interface{}) app_core.ComplexQuery[T] {
+	argsAny := make([]any, len(args))
+	for i, v := range args {
+		argsAny[i] = v
+	}
+	return m.repository.Complex().Raw(query, argsAny...)
 }
 
 // WhereRawWithContext creates a query with raw SQL and context
-func (m *EloquentModel[T]) WhereRawWithContext(ctx context.Context, query string, args ...interface{}) app_core.Query[T] {
-	return m.repository.WhereRawWithContext(ctx, query, args...)
+func (m *EloquentModel[T]) WhereRawWithContext(ctx context.Context, query string, args ...interface{}) app_core.ComplexQuery[T] {
+	argsAny := make([]any, len(args))
+	for i, v := range args {
+		argsAny[i] = v
+	}
+	return m.repository.Complex().Raw(query, argsAny...).WithContext(ctx)
 }
 
 // Transaction executes a function within a transaction
@@ -189,7 +205,7 @@ func (m *EloquentModel[T]) Transaction(fn func(app_core.Repository[T]) error) er
 
 // TransactionWithContext executes a function within a transaction with context
 func (m *EloquentModel[T]) TransactionWithContext(ctx context.Context, fn func(app_core.Repository[T]) error) error {
-	return m.repository.TransactionWithContext(ctx, fn)
+	return m.repository.WithContext(ctx).Transaction(fn)
 }
 
 // WithContext returns a model with context
@@ -206,7 +222,7 @@ func (m *EloquentModel[T]) Exists(id uint) (bool, error) {
 
 // ExistsWithContext checks if a model exists with context
 func (m *EloquentModel[T]) ExistsWithContext(ctx context.Context, id uint) (bool, error) {
-	return m.repository.ExistsWithContext(ctx, id)
+	return m.repository.WithContext(ctx).Exists(id)
 }
 
 // Count returns the total number of models
@@ -216,17 +232,33 @@ func (m *EloquentModel[T]) Count() (int64, error) {
 
 // CountWithContext returns the total number of models with context
 func (m *EloquentModel[T]) CountWithContext(ctx context.Context) (int64, error) {
-	return m.repository.CountWithContext(ctx)
+	return m.repository.WithContext(ctx).Count()
 }
 
 // CountWhere returns the count with conditions
 func (m *EloquentModel[T]) CountWhere(conditions map[string]interface{}) (int64, error) {
-	return m.repository.CountWhere(conditions)
+	conditionsAny := make(map[string]any)
+	for k, v := range conditions {
+		conditionsAny[k] = v
+	}
+	results, err := m.repository.Where(conditionsAny).Get()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(results)), nil
 }
 
 // CountWhereWithContext returns the count with conditions and context
 func (m *EloquentModel[T]) CountWhereWithContext(ctx context.Context, conditions map[string]interface{}) (int64, error) {
-	return m.repository.CountWhereWithContext(ctx, conditions)
+	conditionsAny := make(map[string]any)
+	for k, v := range conditions {
+		conditionsAny[k] = v
+	}
+	results, err := m.repository.WithContext(ctx).Where(conditionsAny).Get()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(results)), nil
 }
 
 // BulkCreate creates multiple models
@@ -238,7 +270,7 @@ func (m *EloquentModel[T]) BulkCreate(models []*T) error {
 		}
 	}
 
-	return m.repository.BulkCreate(models)
+	return m.repository.Complex().BulkCreate(models)
 }
 
 // BulkCreateWithContext creates multiple models with context
@@ -250,7 +282,7 @@ func (m *EloquentModel[T]) BulkCreateWithContext(ctx context.Context, models []*
 		}
 	}
 
-	return m.repository.BulkCreateWithContext(ctx, models)
+	return m.repository.WithContext(ctx).Complex().BulkCreate(models)
 }
 
 // BulkUpdate updates multiple models
@@ -262,7 +294,7 @@ func (m *EloquentModel[T]) BulkUpdate(models []*T) error {
 		}
 	}
 
-	return m.repository.BulkUpdate(models)
+	return m.repository.Complex().BulkUpdate(models)
 }
 
 // BulkUpdateWithContext updates multiple models with context
@@ -274,27 +306,27 @@ func (m *EloquentModel[T]) BulkUpdateWithContext(ctx context.Context, models []*
 		}
 	}
 
-	return m.repository.BulkUpdateWithContext(ctx, models)
+	return m.repository.WithContext(ctx).Complex().BulkUpdate(models)
 }
 
 // BulkDelete deletes multiple models
 func (m *EloquentModel[T]) BulkDelete(ids []uint) error {
-	return m.repository.BulkDelete(ids)
+	return m.repository.Complex().BulkDelete(ids)
 }
 
 // BulkDeleteWithContext deletes multiple models with context
 func (m *EloquentModel[T]) BulkDeleteWithContext(ctx context.Context, ids []uint) error {
-	return m.repository.BulkDeleteWithContext(ctx, ids)
+	return m.repository.WithContext(ctx).Complex().BulkDelete(ids)
 }
 
 // GetPerformanceStats returns performance statistics
 func (m *EloquentModel[T]) GetPerformanceStats() map[string]interface{} {
-	return m.repository.GetPerformanceStats()
+	return m.repository.Complex().Build().GetStats()
 }
 
 // GetOptimizationStats returns optimization statistics
 func (m *EloquentModel[T]) GetOptimizationStats() map[string]interface{} {
-	return m.repository.GetOptimizationStats()
+	return m.repository.Complex().Build().GetStats()
 }
 
 // setTimestamps sets created_at and updated_at timestamps

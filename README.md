@@ -74,8 +74,8 @@ if config.Has("my.feature") {
 
 ### Backend
 - **Go 1.24+**: Core application language
-- **Gin**: HTTP web framework
-- **GORM v2**: Database ORM
+- **FastHTTP**: High-performance HTTP server with Gin routing adapter
+- **Custom Repository Layer**: Optimized SQL with connection pooling and statement caching
 - **ElasticMQ**: Message queue (SQS-compatible)
 - **JWT**: Authentication tokens
 

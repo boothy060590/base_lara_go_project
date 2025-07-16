@@ -143,14 +143,7 @@ type GoroutineRepositoryFactory struct {
 
 // Create creates a new goroutine-optimized repository
 func (f *GoroutineRepositoryFactory) Create(db *sql.DB) app_core.Repository[any] {
-	wsp, _ := f.container.Resolve("work_stealing_pool")
-	ca, _ := f.container.Resolve("custom_allocator")
-	pgo, _ := f.container.Resolve("profile_guided_optimizer")
-	return app_core.NewRepository[any](db,
-		wsp.(*app_core.WorkStealingPool[any]),
-		ca.(*app_core.CustomAllocator[any]),
-		pgo.(*app_core.ProfileGuidedOptimizer[any]),
-	)
+	return app_core.NewRepository[any](db)
 }
 
 // GoroutineListenerOptimizer automatically optimizes listeners with goroutines

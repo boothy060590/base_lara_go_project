@@ -9,7 +9,9 @@ import (
 
 	go_core "base_lara_go_project/app/core/go_core"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGoroutineConfig tests the configuration system
@@ -286,8 +288,13 @@ func TestGoroutineAwareRepository(t *testing.T) {
 		}
 		_ = go_core.NewGoroutineManager[string](config)
 
+		// Create a mock database for testing
+		db, _, err := sqlmock.New()
+		require.NoError(t, err, "Failed to create mock database")
+		defer db.Close()
+
 		// Test the canonical repository with goroutine optimizations
-		repo := go_core.NewRepository[string](nil, nil, nil, nil)
+		repo := go_core.NewRepository[string](db)
 		assert.NotNil(t, repo)
 	})
 
@@ -643,11 +650,13 @@ func TestGoroutineDataLossDetection(t *testing.T) {
 }
 
 // Mock implementations for testing
+// MockRepository for testing goroutine-aware repository operations
 type MockRepository[T any] struct {
 	findResult     T
 	findError      error
 	findManyResult []T
 	findManyError  error
+	ctx            context.Context
 }
 
 func (m *MockRepository[T]) Find(id uint) (*T, error) {
@@ -658,51 +667,68 @@ func (m *MockRepository[T]) Find(id uint) (*T, error) {
 }
 
 func (m *MockRepository[T]) FindMany(ids []uint) ([]T, error) {
-	return m.findManyResult, m.findManyError
+	if m.findManyError != nil {
+		return nil, m.findManyError
+	}
+	return m.findManyResult, nil
 }
 
 func (m *MockRepository[T]) Count() (int64, error) {
 	return int64(len(m.findManyResult)), nil
 }
 
-// Implement other required methods with minimal implementations
 func (m *MockRepository[T]) FindBy(field string, value any) (*T, error) { return nil, nil }
 func (m *MockRepository[T]) FindAll() ([]T, error)                      { return nil, nil }
 func (m *MockRepository[T]) Create(model *T) error                      { return nil }
 func (m *MockRepository[T]) Update(model *T) error                      { return nil }
 func (m *MockRepository[T]) Delete(id uint) error                       { return nil }
+
 func (m *MockRepository[T]) FindWithContext(ctx context.Context, id uint) (*T, error) {
-	return nil, nil
+	return m.Find(id)
 }
+
 func (m *MockRepository[T]) FindByWithContext(ctx context.Context, field string, value any) (*T, error) {
-	return nil, nil
+	return m.FindBy(field, value)
 }
+
 func (m *MockRepository[T]) FindAllWithContext(ctx context.Context) ([]T, error)   { return nil, nil }
 func (m *MockRepository[T]) CreateWithContext(ctx context.Context, model *T) error { return nil }
 func (m *MockRepository[T]) UpdateWithContext(ctx context.Context, model *T) error { return nil }
 func (m *MockRepository[T]) DeleteWithContext(ctx context.Context, id uint) error  { return nil }
-func (m *MockRepository[T]) Where(conditions map[string]any) go_core.Query[T]      { return nil }
-func (m *MockRepository[T]) WhereRaw(query string, args ...any) go_core.Query[T]   { return nil }
-func (m *MockRepository[T]) WhereWithContext(ctx context.Context, conditions map[string]any) go_core.Query[T] {
-	return nil
+
+func (m *MockRepository[T]) Where(conditions map[string]any) go_core.SmartQuery[T] {
+	return &MockSmartQuery[T]{repo: m}
 }
-func (m *MockRepository[T]) WhereRawWithContext(ctx context.Context, query string, args ...any) go_core.Query[T] {
-	return nil
+
+func (m *MockRepository[T]) Complex() go_core.ComplexQueryBuilder[T] {
+	return &MockComplexQueryBuilder[T]{repo: m}
 }
-func (m *MockRepository[T]) Transaction(fn func(go_core.Repository[T]) error) error { return nil }
-func (m *MockRepository[T]) TransactionWithContext(ctx context.Context, fn func(go_core.Repository[T]) error) error {
-	return nil
+
+func (m *MockRepository[T]) WithOptimization(level go_core.QueryComplexity) go_core.Repository[T] {
+	return m
 }
-func (m *MockRepository[T]) WithContext(ctx context.Context) go_core.Repository[T] { return m }
-func (m *MockRepository[T]) Exists(id uint) (bool, error)                          { return false, nil }
-func (m *MockRepository[T]) CountWhere(conditions map[string]any) (int64, error)   { return 0, nil }
+
+func (m *MockRepository[T]) WithContext(ctx context.Context) go_core.Repository[T] {
+	newRepo := *m
+	newRepo.ctx = ctx
+	return &newRepo
+}
+
+func (m *MockRepository[T]) Transaction(fn func(go_core.Repository[T]) error) error {
+	return fn(m)
+}
+
+func (m *MockRepository[T]) Exists(id uint) (bool, error)                        { return false, nil }
+func (m *MockRepository[T]) CountWhere(conditions map[string]any) (int64, error) { return 0, nil }
 func (m *MockRepository[T]) ExistsWithContext(ctx context.Context, id uint) (bool, error) {
-	return false, nil
+	return m.Exists(id)
 }
+
 func (m *MockRepository[T]) CountWithContext(ctx context.Context) (int64, error) { return 0, nil }
 func (m *MockRepository[T]) CountWhereWithContext(ctx context.Context, conditions map[string]any) (int64, error) {
-	return 0, nil
+	return m.CountWhere(conditions)
 }
+
 func (m *MockRepository[T]) GetPerformanceStats() map[string]interface{}                  { return nil }
 func (m *MockRepository[T]) GetOptimizationStats() map[string]interface{}                 { return nil }
 func (m *MockRepository[T]) BulkCreate(models []*T) error                                 { return nil }
@@ -711,6 +737,154 @@ func (m *MockRepository[T]) BulkDelete(ids []uint) error                        
 func (m *MockRepository[T]) BulkCreateWithContext(ctx context.Context, models []*T) error { return nil }
 func (m *MockRepository[T]) BulkUpdateWithContext(ctx context.Context, models []*T) error { return nil }
 func (m *MockRepository[T]) BulkDeleteWithContext(ctx context.Context, ids []uint) error  { return nil }
+
+// MockSmartQuery implements the SmartQuery interface
+type MockSmartQuery[T any] struct {
+	repo *MockRepository[T]
+	ctx  context.Context
+}
+
+func (m *MockSmartQuery[T]) Where(field string, operator string, value any) go_core.SmartQuery[T] {
+	return m
+}
+
+func (m *MockSmartQuery[T]) WhereIn(field string, values []any) go_core.SmartQuery[T] {
+	return m
+}
+
+func (m *MockSmartQuery[T]) OrderBy(field string, direction string) go_core.SmartQuery[T] {
+	return m
+}
+
+func (m *MockSmartQuery[T]) Limit(limit int) go_core.SmartQuery[T] {
+	return m
+}
+
+func (m *MockSmartQuery[T]) Offset(offset int) go_core.SmartQuery[T] {
+	return m
+}
+
+func (m *MockSmartQuery[T]) Get() ([]T, error) {
+	return m.repo.findManyResult, m.repo.findManyError
+}
+
+func (m *MockSmartQuery[T]) First() (*T, error) {
+	return m.repo.Find(1)
+}
+
+func (m *MockSmartQuery[T]) Paginate(page, perPage int) ([]T, int64, error) {
+	return m.repo.findManyResult, int64(len(m.repo.findManyResult)), m.repo.findManyError
+}
+
+func (m *MockSmartQuery[T]) AsComplex() go_core.ComplexQuery[T] {
+	return &MockComplexQuery[T]{repo: m.repo}
+}
+
+func (m *MockSmartQuery[T]) WithContext(ctx context.Context) go_core.SmartQuery[T] {
+	newQuery := *m
+	newQuery.ctx = ctx
+	return &newQuery
+}
+
+// MockComplexQueryBuilder implements the ComplexQueryBuilder interface
+type MockComplexQueryBuilder[T any] struct {
+	repo *MockRepository[T]
+	ctx  context.Context
+}
+
+func (m *MockComplexQueryBuilder[T]) Join(table string, on string) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) LeftJoin(table string, on string) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) RightJoin(table string, on string) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) GroupBy(fields ...string) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) Having(condition string, args ...any) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) Raw(query string, args ...any) go_core.ComplexQuery[T] {
+	return &MockComplexQuery[T]{repo: m.repo}
+}
+
+func (m *MockComplexQueryBuilder[T]) BulkCreate(models []*T) error {
+	return nil
+}
+
+func (m *MockComplexQueryBuilder[T]) BulkUpdate(models []*T) error {
+	return nil
+}
+
+func (m *MockComplexQueryBuilder[T]) BulkDelete(ids []uint) error {
+	return nil
+}
+
+func (m *MockComplexQueryBuilder[T]) WithBatching(enabled bool) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) WithAsync(enabled bool) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) WithPipeline(enabled bool) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) WithWorkStealing(enabled bool) go_core.ComplexQueryBuilder[T] {
+	return m
+}
+
+func (m *MockComplexQueryBuilder[T]) Build() go_core.ComplexQuery[T] {
+	return &MockComplexQuery[T]{repo: m.repo}
+}
+
+// MockComplexQuery implements the ComplexQuery interface
+type MockComplexQuery[T any] struct {
+	repo *MockRepository[T]
+	ctx  context.Context
+}
+
+func (m *MockComplexQuery[T]) Get() ([]T, error) {
+	return m.repo.findManyResult, m.repo.findManyError
+}
+
+func (m *MockComplexQuery[T]) First() (*T, error) {
+	return m.repo.Find(1)
+}
+
+func (m *MockComplexQuery[T]) Paginate(page, perPage int) ([]T, int64, error) {
+	return m.repo.findManyResult, int64(len(m.repo.findManyResult)), m.repo.findManyError
+}
+
+func (m *MockComplexQuery[T]) Stream() (<-chan T, error) {
+	ch := make(chan T)
+	close(ch)
+	return ch, nil
+}
+
+func (m *MockComplexQuery[T]) WithMetrics(enabled bool) go_core.ComplexQuery[T] {
+	return m
+}
+
+func (m *MockComplexQuery[T]) GetStats() map[string]any {
+	return map[string]any{}
+}
+
+func (m *MockComplexQuery[T]) WithContext(ctx context.Context) go_core.ComplexQuery[T] {
+	newQuery := *m
+	newQuery.ctx = ctx
+	return &newQuery
+}
 
 type MockEventDispatcher[T any] struct {
 	dispatchError error

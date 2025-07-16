@@ -16,10 +16,7 @@ type RepositoryServiceProvider struct {
 
 // Register registers all application repositories using canonical constructors
 func (p *RepositoryServiceProvider) Register(container *app_core.Container) error {
-	// Resolve optimization singletons
-	wsp, _ := container.Resolve("optimization.work_stealing")
-	ca, _ := container.Resolve("optimization.custom_allocator")
-	pgo, _ := container.Resolve("optimization.profile_guided")
+	// Note: optimization singletons no longer needed with new repository architecture
 
 	// Get database connection from container
 	dbInstance, err := container.Resolve("sql.db")
@@ -48,12 +45,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.User])
 		}
 
-		repo := app_core.NewRepository[models.User](
-			db,
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		)
+		repo := app_core.NewRepository[models.User](db)
 
 		return repositories.NewUserRepository(repo, cache), nil
 	})
@@ -67,12 +59,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.Role])
 		}
 
-		repo := app_core.NewRepository[models.Role](
-			db,
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		)
+		repo := app_core.NewRepository[models.Role](db)
 
 		return repositories.NewRoleRepository(repo, cache), nil
 	})
@@ -86,12 +73,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.Permission])
 		}
 
-		repo := app_core.NewRepository[models.Permission](
-			db,
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		)
+		repo := app_core.NewRepository[models.Permission](db)
 
 		return repositories.NewPermissionRepository(repo, cache), nil
 	})
@@ -105,12 +87,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.Category])
 		}
 
-		repo := app_core.NewRepository[models.Category](
-			db,
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		)
+		repo := app_core.NewRepository[models.Category](db)
 
 		return repositories.NewCategoryRepository(repo, cache), nil
 	})
@@ -124,12 +101,7 @@ func (p *RepositoryServiceProvider) Register(container *app_core.Container) erro
 			cache = cacheInstance.(app_core.Cache[models.Service])
 		}
 
-		repo := app_core.NewRepository[models.Service](
-			db,
-			wsp.(*app_core.WorkStealingPool[any]),
-			ca.(*app_core.CustomAllocator[any]),
-			pgo.(*app_core.ProfileGuidedOptimizer[any]),
-		)
+		repo := app_core.NewRepository[models.Service](db)
 
 		return repositories.NewServiceRepository(repo, cache), nil
 	})
