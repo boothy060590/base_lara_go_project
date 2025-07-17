@@ -17,11 +17,11 @@ func TestJSONSchemaConfig(t *testing.T) {
 	if !config.Enabled {
 		t.Error("Default configuration should be enabled")
 	}
-	
+
 	if len(config.Schemas) == 0 {
 		t.Error("Default configuration should have schemas")
 	}
-	
+
 	// The basic configuration from the service provider should have at least these core schemas
 	coreSchemas := []string{"api_success", "api_error"}
 	for _, schemaName := range coreSchemas {
@@ -29,7 +29,7 @@ func TestJSONSchemaConfig(t *testing.T) {
 			t.Errorf("Default configuration should have %s schema", schemaName)
 		}
 	}
-	
+
 	// Log available schemas for debugging
 	var schemaNames []string
 	for name := range config.Schemas {
@@ -42,14 +42,14 @@ func TestJSONSchemaConfig(t *testing.T) {
 func TestJSONSchemaManager(t *testing.T) {
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Test schema registration
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	// Test schema retrieval
 	schema, exists := manager.GetSchema("api_success")
 	if !exists {
@@ -58,28 +58,28 @@ func TestJSONSchemaManager(t *testing.T) {
 	if schema.Name != "API Success Response" {
 		t.Errorf("Expected 'API Success Response', got '%s'", schema.Name)
 	}
-	
+
 	// Test schema rendering
 	data := map[string]interface{}{
 		"message": "Test message",
 		"data":    map[string]interface{}{"key": "value"},
 	}
-	
+
 	result, err := manager.RenderSchemaOptimized("api_success", data)
 	if err != nil {
 		t.Errorf("Failed to render schema: %v", err)
 	}
-	
+
 	// Parse and validate result
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Errorf("Failed to parse rendered JSON: %v", err)
 	}
-	
+
 	if parsed["success"] != true {
 		t.Error("Expected success to be true")
 	}
-	
+
 	if parsed["message"] != "Test message" {
 		t.Errorf("Expected message 'Test message', got '%v'", parsed["message"])
 	}
@@ -89,14 +89,14 @@ func TestJSONSchemaManager(t *testing.T) {
 func TestOptimizedSchemaRendering(t *testing.T) {
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Register schemas
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	// Test optimized rendering for common schemas
 	testCases := []struct {
 		schema string
@@ -119,20 +119,20 @@ func TestOptimizedSchemaRendering(t *testing.T) {
 			data:   map[string]interface{}{"message": "Login successful", "user": map[string]interface{}{"id": 1}, "token": "abc123"},
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.schema, func(t *testing.T) {
 			result, err := manager.RenderSchemaOptimized(tc.schema, tc.data)
 			if err != nil {
 				t.Errorf("Failed to render schema '%s': %v", tc.schema, err)
 			}
-			
+
 			// Validate JSON is valid
 			var parsed map[string]interface{}
 			if err := json.Unmarshal(result, &parsed); err != nil {
 				t.Errorf("Failed to parse rendered JSON for schema '%s': %v", tc.schema, err)
 			}
-			
+
 			t.Logf("Schema '%s' rendered: %s", tc.schema, string(result))
 		})
 	}
@@ -142,31 +142,31 @@ func TestOptimizedSchemaRendering(t *testing.T) {
 func TestSchemaValidation(t *testing.T) {
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Register schemas
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	// Test valid data - api_success schema requires success, message, and optional data
 	validData := map[string]interface{}{
 		"success": true,
 		"message": "Test message",
 		"data":    map[string]interface{}{"key": "value"},
 	}
-	
+
 	if err := manager.ValidateSchemaData("api_success", validData); err != nil {
 		t.Errorf("Valid data should pass validation: %v", err)
 	}
-	
+
 	// Test invalid data (missing required field)
 	invalidData := map[string]interface{}{
 		"data": map[string]interface{}{"key": "value"},
 		// Missing required "success" and "message" fields
 	}
-	
+
 	if err := manager.ValidateSchemaData("api_success", invalidData); err == nil {
 		t.Error("Invalid data should fail validation")
 	}
@@ -179,12 +179,12 @@ func TestConfigLoader(t *testing.T) {
 	if configData == nil {
 		t.Error("Config data should not be nil")
 	}
-	
+
 	// Test enabled flag
 	if enabled, ok := configData["enabled"].(bool); !ok || !enabled {
 		t.Error("Config should be enabled")
 	}
-	
+
 	// Test schemas section
 	if schemas, ok := configData["schemas"].(map[string]interface{}); !ok || len(schemas) == 0 {
 		t.Error("Config should have schemas")
@@ -195,33 +195,36 @@ func TestConfigLoader(t *testing.T) {
 func TestJSONServiceProvider(t *testing.T) {
 	// Initialize service provider
 	provider := providers.NewJSONServiceProvider()
-	
+
+	// Create container for testing
+	container := go_core.NewContainer()
+
 	// Test registration
-	if err := provider.Register(); err != nil {
+	if err := provider.Register(container); err != nil {
 		t.Errorf("Failed to register JSON service provider: %v", err)
 	}
-	
+
 	// Test boot
-	if err := provider.Boot(); err != nil {
+	if err := provider.Boot(container); err != nil {
 		t.Errorf("Failed to boot JSON service provider: %v", err)
 	}
-	
+
 	// Test configuration retrieval
 	config := provider.GetConfiguration()
 	if config == nil {
 		t.Error("Configuration should not be nil")
 	}
-	
+
 	if !config.Enabled {
 		t.Error("Configuration should be enabled")
 	}
-	
+
 	// Test schema operations
 	schemas := provider.GetSchemaList()
 	if len(schemas) == 0 {
 		t.Error("Should have schemas")
 	}
-	
+
 	// Test metrics
 	if provider.IsEnabled() {
 		metrics := provider.GetMetrics()
@@ -236,45 +239,45 @@ func TestGlobalSchemaFunctions(t *testing.T) {
 	// Initialize global components
 	go_core.InitializeGlobalJSONProcessor(nil)
 	go_core.InitializeGlobalResponsePoolManager()
-	
+
 	// Create and set schema manager
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Register schemas
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	go_core.SetGlobalSchemaManager(manager)
-	
+
 	// Test global schema rendering
 	data := map[string]interface{}{
 		"message": "Global test",
 		"data":    map[string]interface{}{"test": true},
 	}
-	
+
 	result, err := go_core.RenderGlobalSchema("api_success", data)
 	if err != nil {
 		t.Errorf("Failed to render global schema: %v", err)
 	}
-	
+
 	// Validate result
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Errorf("Failed to parse global schema result: %v", err)
 	}
-	
+
 	if parsed["success"] != true {
 		t.Error("Expected success to be true")
 	}
-	
+
 	if parsed["message"] != "Global test" {
 		t.Errorf("Expected message 'Global test', got '%v'", parsed["message"])
 	}
-	
+
 	// Test global schema validation with complete data
 	validationData := map[string]interface{}{
 		"success": true,
@@ -284,7 +287,7 @@ func TestGlobalSchemaFunctions(t *testing.T) {
 	if err := go_core.ValidateGlobalSchemaData("api_success", validationData); err != nil {
 		t.Errorf("Global schema validation failed: %v", err)
 	}
-	
+
 	// Test global schema list
 	schemaList := go_core.GetGlobalSchemaList()
 	if len(schemaList) == 0 {
@@ -296,42 +299,42 @@ func TestGlobalSchemaFunctions(t *testing.T) {
 func TestSchemaPerformance(t *testing.T) {
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Register schemas
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	// Test data
 	data := map[string]interface{}{
 		"message": "Performance test",
 		"data":    map[string]interface{}{"benchmark": true},
 	}
-	
+
 	// Benchmark schema rendering
 	iterations := 1000
 	start := time.Now()
-	
+
 	for i := 0; i < iterations; i++ {
 		if _, err := manager.RenderSchemaOptimized("api_success", data); err != nil {
 			t.Errorf("Schema rendering failed on iteration %d: %v", i, err)
 		}
 	}
-	
+
 	duration := time.Since(start)
 	avgTime := duration / time.Duration(iterations)
-	
-	t.Logf("Schema rendering performance: %d iterations in %v (avg: %v per operation)", 
+
+	t.Logf("Schema rendering performance: %d iterations in %v (avg: %v per operation)",
 		iterations, duration, avgTime)
-	
+
 	// Get metrics
 	metrics := manager.GetMetrics()
 	if metrics.TotalRenders != int64(iterations) {
 		t.Errorf("Expected %d renders, got %d", iterations, metrics.TotalRenders)
 	}
-	
+
 	if metrics.RenderErrors > 0 {
 		t.Errorf("Expected 0 render errors, got %d", metrics.RenderErrors)
 	}
@@ -341,45 +344,45 @@ func TestSchemaPerformance(t *testing.T) {
 func TestConcurrentSchemaOperations(t *testing.T) {
 	config := go_core.GetDefaultJSONSchemaConfig()
 	manager := go_core.NewJSONSchemaManager(config)
-	
+
 	// Register schemas
 	for name, schema := range config.Schemas {
 		if err := manager.RegisterSchema(name, schema); err != nil {
 			t.Errorf("Failed to register schema '%s': %v", name, err)
 		}
 	}
-	
+
 	// Test concurrent rendering
 	done := make(chan bool)
 	errors := make(chan error, 100)
-	
+
 	for i := 0; i < 100; i++ {
 		go func(id int) {
 			defer func() { done <- true }()
-			
+
 			data := map[string]interface{}{
 				"message": fmt.Sprintf("Concurrent test %d", id),
 				"data":    map[string]interface{}{"id": id},
 			}
-			
+
 			if _, err := manager.RenderSchemaOptimized("api_success", data); err != nil {
 				errors <- err
 			}
 		}(i)
 	}
-	
+
 	// Wait for all goroutines to complete
 	for i := 0; i < 100; i++ {
 		<-done
 	}
-	
+
 	close(errors)
-	
+
 	// Check for errors
 	for err := range errors {
 		t.Errorf("Concurrent rendering error: %v", err)
 	}
-	
+
 	// Check metrics
 	metrics := manager.GetMetrics()
 	if metrics.TotalRenders != 100 {

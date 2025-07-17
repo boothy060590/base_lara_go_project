@@ -35,6 +35,8 @@ func (p *AppServiceProvider) Register(container *app_core.Container) error {
 		&GoroutineServiceProvider{},
 		&ContextServiceProvider{},
 		&HTTPOptimizationServiceProvider{}, // Add HTTP optimization
+		&ObjectPoolsServiceProvider{},      // Add object pools
+		&JSONServiceProvider{},             // Add JSON optimization
 	}
 
 	// Register all core providers
@@ -70,6 +72,8 @@ func (p *AppServiceProvider) Boot(container *app_core.Container) error {
 		&ValidationServiceProvider{},
 		&GoroutineServiceProvider{},
 		&HTTPOptimizationServiceProvider{}, // Add HTTP optimization to boot sequence
+		&ObjectPoolsServiceProvider{},      // Add object pools to boot sequence
+		&JSONServiceProvider{},             // Add JSON optimization to boot sequence
 	}
 
 	for _, provider := range coreProviders {

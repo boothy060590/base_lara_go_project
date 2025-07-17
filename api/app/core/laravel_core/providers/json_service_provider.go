@@ -2,6 +2,7 @@ package providers
 
 import (
 	"base_lara_go_project/app/core/go_core"
+	app_core "base_lara_go_project/app/core/go_core"
 	"base_lara_go_project/config"
 	"fmt"
 	"log"
@@ -19,60 +20,68 @@ func NewJSONServiceProvider() *JSONServiceProvider {
 }
 
 // Register registers the JSON optimization services
-func (jsp *JSONServiceProvider) Register() error {
+func (jsp *JSONServiceProvider) Register(container *app_core.Container) error {
 	// Load configuration
 	if err := jsp.loadConfiguration(); err != nil {
 		log.Printf("Failed to load JSON configuration: %v", err)
 		// Fall back to defaults
 		jsp.config = go_core.GetDefaultJSONSchemaConfig()
 	}
-	
+
 	// Initialize JSON processor with config
 	if err := jsp.initializeJSONProcessor(); err != nil {
 		return fmt.Errorf("failed to initialize JSON processor: %w", err)
 	}
-	
+
 	// Initialize response pools
 	if err := jsp.initializeResponsePools(); err != nil {
 		return fmt.Errorf("failed to initialize response pools: %w", err)
 	}
-	
+
 	// Initialize JSON schema manager
 	if err := jsp.initializeSchemaManager(); err != nil {
 		return fmt.Errorf("failed to initialize schema manager: %w", err)
 	}
-	
+
 	// Initialize metrics collection
 	if err := jsp.initializeMetrics(); err != nil {
 		return fmt.Errorf("failed to initialize metrics: %w", err)
 	}
-	
+
 	log.Println("JSON optimization services registered successfully")
 	return nil
 }
 
 // Boot boots the JSON optimization services
-func (jsp *JSONServiceProvider) Boot() error {
+func (jsp *JSONServiceProvider) Boot(container *app_core.Container) error {
 	// Start metrics monitoring if enabled
-	if jsp.config.Metrics.Enabled {
+	if jsp.config != nil && jsp.config.Metrics.Enabled {
 		go_core.StartGlobalJSONMetricsMonitor()
 		log.Println("JSON metrics monitoring started")
 	}
-	
+
 	// Register schema templates
 	if err := jsp.registerSchemaTemplates(); err != nil {
 		return fmt.Errorf("failed to register schema templates: %w", err)
 	}
-	
+
 	log.Println("JSON optimization services booted successfully")
 	return nil
+}
+
+func (jsp *JSONServiceProvider) Provides() []string {
+	return []string{"json_optimizations"}
+}
+
+func (jsp *JSONServiceProvider) When() []string {
+	return []string{}
 }
 
 // loadConfiguration loads the JSON schema configuration
 func (jsp *JSONServiceProvider) loadConfiguration() error {
 	// Load from Laravel-style config system
 	configData := config.Get("json_optimizations")
-	
+
 	// Convert config data to JSONSchemaConfig
 	if configMap, ok := configData.(map[string]interface{}); ok {
 		jsp.config = jsp.parseConfigMap(configMap)
@@ -80,7 +89,7 @@ func (jsp *JSONServiceProvider) loadConfiguration() error {
 		// Fall back to default if config is not available
 		jsp.config = go_core.GetDefaultJSONSchemaConfig()
 	}
-	
+
 	return nil
 }
 
@@ -90,7 +99,7 @@ func (jsp *JSONServiceProvider) parseConfigMap(configMap map[string]interface{})
 		Enabled: getBoolFromConfig(configMap, "enabled", true),
 		Schemas: make(map[string]go_core.JSONSchemaPattern),
 	}
-	
+
 	// Parse buffer pool config
 	if bufferPoolData, ok := configMap["buffer_pool"].(map[string]interface{}); ok {
 		config.BufferPool = go_core.BufferPoolConfig{
@@ -98,14 +107,14 @@ func (jsp *JSONServiceProvider) parseConfigMap(configMap map[string]interface{})
 			InitialSize:   getIntFromConfig(bufferPoolData, "initial_size", 4*1024),
 		}
 	}
-	
+
 	// Parse response pool config
 	if responsePoolData, ok := configMap["response_pool"].(map[string]interface{}); ok {
 		config.ResponsePool = go_core.ResponsePoolConfig{
 			PoolSize: getIntFromConfig(responsePoolData, "pool_size", 500),
 		}
 	}
-	
+
 	// Parse metrics config
 	if metricsData, ok := configMap["metrics"].(map[string]interface{}); ok {
 		config.Metrics = go_core.MetricsConfig{
@@ -114,7 +123,7 @@ func (jsp *JSONServiceProvider) parseConfigMap(configMap map[string]interface{})
 			ReportInterval:     time.Duration(getIntFromConfig(metricsData, "report_interval", 900)) * time.Second,
 		}
 	}
-	
+
 	// Parse schemas
 	if schemasData, ok := configMap["schemas"].(map[string]interface{}); ok {
 		for schemaName, schemaData := range schemasData {
@@ -124,7 +133,7 @@ func (jsp *JSONServiceProvider) parseConfigMap(configMap map[string]interface{})
 			}
 		}
 	}
-	
+
 	return config
 }
 
@@ -138,7 +147,7 @@ func (jsp *JSONServiceProvider) parseSchemaMap(schemaMap map[string]interface{})
 		Enabled:     getBoolFromConfig(schemaMap, "enabled", true),
 		Fields:      make(map[string]go_core.FieldConfig),
 	}
-	
+
 	// Parse fields
 	if fieldsData, ok := schemaMap["fields"].(map[string]interface{}); ok {
 		for fieldName, fieldData := range fieldsData {
@@ -153,7 +162,7 @@ func (jsp *JSONServiceProvider) parseSchemaMap(schemaMap map[string]interface{})
 			}
 		}
 	}
-	
+
 	return schema
 }
 
@@ -194,17 +203,17 @@ func (jsp *JSONServiceProvider) initializeJSONProcessor() error {
 		log.Println("JSON optimization is disabled")
 		return nil
 	}
-	
+
 	// Create processor config from schema config
 	processorConfig := &go_core.JSONProcessorConfig{
 		MaxBufferSize:    jsp.config.BufferPool.MaxBufferSize,
 		InitialSize:      jsp.config.BufferPool.InitialSize,
 		ResponsePoolSize: jsp.config.ResponsePool.PoolSize,
 	}
-	
+
 	// Initialize global processor
 	go_core.InitializeGlobalJSONProcessor(processorConfig)
-	
+
 	log.Printf("JSON processor initialized with max buffer: %d bytes", processorConfig.MaxBufferSize)
 	return nil
 }
@@ -214,10 +223,10 @@ func (jsp *JSONServiceProvider) initializeResponsePools() error {
 	if !jsp.config.Enabled {
 		return nil
 	}
-	
+
 	// Initialize global response pool manager
 	go_core.InitializeGlobalResponsePoolManager()
-	
+
 	log.Printf("Response pools initialized with pool size: %d", jsp.config.ResponsePool.PoolSize)
 	return nil
 }
@@ -227,11 +236,11 @@ func (jsp *JSONServiceProvider) initializeSchemaManager() error {
 	if !jsp.config.Enabled {
 		return nil
 	}
-	
+
 	// Create schema manager with loaded configuration
 	manager := go_core.NewJSONSchemaManager(jsp.config)
 	go_core.SetGlobalSchemaManager(manager)
-	
+
 	log.Printf("Schema manager initialized with %d schemas", len(jsp.config.Schemas))
 	return nil
 }
@@ -241,10 +250,10 @@ func (jsp *JSONServiceProvider) initializeMetrics() error {
 	if !jsp.config.Enabled || !jsp.config.Metrics.Enabled {
 		return nil
 	}
-	
+
 	// Initialize global metrics
 	go_core.InitializeGlobalJSONMetrics()
-	
+
 	log.Println("JSON metrics collection initialized")
 	return nil
 }
@@ -254,12 +263,12 @@ func (jsp *JSONServiceProvider) registerSchemaTemplates() error {
 	if !jsp.config.Enabled {
 		return nil
 	}
-	
+
 	schemaManager := go_core.GetGlobalSchemaManager()
 	if schemaManager == nil {
 		return fmt.Errorf("schema manager not initialized")
 	}
-	
+
 	// Register all configured schemas
 	for name, schema := range jsp.config.GetEnabledSchemas() {
 		if err := schemaManager.RegisterSchema(name, schema); err != nil {
@@ -268,7 +277,7 @@ func (jsp *JSONServiceProvider) registerSchemaTemplates() error {
 		}
 		log.Printf("Registered schema: %s", name)
 	}
-	
+
 	return nil
 }
 
@@ -280,24 +289,24 @@ func (jsp *JSONServiceProvider) GetConfiguration() *go_core.JSONSchemaConfig {
 // UpdateConfiguration updates the configuration
 func (jsp *JSONServiceProvider) UpdateConfiguration(newConfig *go_core.JSONSchemaConfig) error {
 	jsp.config = newConfig
-	
+
 	// Reinitialize services with new configuration
 	if err := jsp.initializeJSONProcessor(); err != nil {
 		return err
 	}
-	
+
 	if err := jsp.initializeResponsePools(); err != nil {
 		return err
 	}
-	
+
 	if err := jsp.initializeSchemaManager(); err != nil {
 		return err
 	}
-	
+
 	if err := jsp.registerSchemaTemplates(); err != nil {
 		return err
 	}
-	
+
 	log.Println("JSON configuration updated successfully")
 	return nil
 }
@@ -316,7 +325,7 @@ func (jsp *JSONServiceProvider) AddCustomSchema(name string, schema go_core.JSON
 	if err := jsp.config.AddSchema(name, schema); err != nil {
 		return fmt.Errorf("failed to add schema: %w", err)
 	}
-	
+
 	// Register the schema with the schema manager
 	schemaManager := go_core.GetGlobalSchemaManager()
 	if schemaManager != nil {
@@ -324,7 +333,7 @@ func (jsp *JSONServiceProvider) AddCustomSchema(name string, schema go_core.JSON
 			return fmt.Errorf("failed to register schema: %w", err)
 		}
 	}
-	
+
 	log.Printf("Custom schema '%s' added successfully", name)
 	return nil
 }
@@ -332,13 +341,13 @@ func (jsp *JSONServiceProvider) AddCustomSchema(name string, schema go_core.JSON
 // RemoveCustomSchema removes a custom schema from the configuration
 func (jsp *JSONServiceProvider) RemoveCustomSchema(name string) error {
 	jsp.config.RemoveSchema(name)
-	
+
 	// Unregister the schema from the schema manager
 	schemaManager := go_core.GetGlobalSchemaManager()
 	if schemaManager != nil {
 		schemaManager.UnregisterSchema(name)
 	}
-	
+
 	log.Printf("Custom schema '%s' removed successfully", name)
 	return nil
 }
@@ -346,7 +355,7 @@ func (jsp *JSONServiceProvider) RemoveCustomSchema(name string) error {
 // EnableSchema enables a schema
 func (jsp *JSONServiceProvider) EnableSchema(name string) error {
 	jsp.config.EnableSchema(name)
-	
+
 	// Re-register the schema
 	if schema, exists := jsp.config.GetSchemaByName(name); exists {
 		schemaManager := go_core.GetGlobalSchemaManager()
@@ -356,7 +365,7 @@ func (jsp *JSONServiceProvider) EnableSchema(name string) error {
 			}
 		}
 	}
-	
+
 	log.Printf("Schema '%s' enabled successfully", name)
 	return nil
 }
@@ -364,13 +373,13 @@ func (jsp *JSONServiceProvider) EnableSchema(name string) error {
 // DisableSchema disables a schema
 func (jsp *JSONServiceProvider) DisableSchema(name string) error {
 	jsp.config.DisableSchema(name)
-	
+
 	// Unregister the schema
 	schemaManager := go_core.GetGlobalSchemaManager()
 	if schemaManager != nil {
 		schemaManager.UnregisterSchema(name)
 	}
-	
+
 	log.Printf("Schema '%s' disabled successfully", name)
 	return nil
 }
@@ -380,7 +389,7 @@ func (jsp *JSONServiceProvider) GetMetrics() map[string]interface{} {
 	if !jsp.config.Enabled || !jsp.config.Metrics.Enabled {
 		return nil
 	}
-	
+
 	return go_core.GetGlobalJSONMetricsSummary()
 }
 
@@ -389,7 +398,7 @@ func (jsp *JSONServiceProvider) GetDetailedMetrics() go_core.JSONPerformanceRepo
 	if !jsp.config.Enabled || !jsp.config.Metrics.Enabled {
 		return go_core.JSONPerformanceReport{}
 	}
-	
+
 	return go_core.GetGlobalJSONMetrics()
 }
 
@@ -424,7 +433,7 @@ var GlobalJSONServiceProvider *JSONServiceProvider
 // InitializeGlobalJSONServiceProvider initializes the global JSON service provider
 func InitializeGlobalJSONServiceProvider() error {
 	GlobalJSONServiceProvider = NewJSONServiceProvider()
-	return GlobalJSONServiceProvider.Register()
+	return GlobalJSONServiceProvider.Register(nil) // Pass nil for now, as app_core.Container is not available here
 }
 
 // BootGlobalJSONServiceProvider boots the global JSON service provider
@@ -432,7 +441,7 @@ func BootGlobalJSONServiceProvider() error {
 	if GlobalJSONServiceProvider == nil {
 		return fmt.Errorf("JSON service provider not initialized")
 	}
-	return GlobalJSONServiceProvider.Boot()
+	return GlobalJSONServiceProvider.Boot(nil) // Pass nil for now, as app_core.Container is not available here
 }
 
 // GetGlobalJSONServiceProvider returns the global JSON service provider
