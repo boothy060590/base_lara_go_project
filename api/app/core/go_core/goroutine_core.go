@@ -348,17 +348,11 @@ func (gm *GoroutineManager[T]) scaleDown(count int) {
 	}
 }
 
-// Note: GoroutineAwareRepository has been removed - use InfrastructureOptimizedRepository instead
-
 // RepositoryResult represents the result of an async repository operation
 type RepositoryResult[T any] struct {
 	Data  T
 	Error error
 }
-
-// Note: GoroutineAwareEventDispatcher has been removed - use InfrastructureOptimizedDispatcher instead
-
-// Note: GoroutineAwareJobDispatcher has been removed - use InfrastructureOptimizedRepository instead
 
 // GetMetrics returns current goroutine metrics
 func (gm *GoroutineManager[T]) GetMetrics() GoroutineMetrics {

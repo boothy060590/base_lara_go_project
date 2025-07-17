@@ -38,7 +38,8 @@
       "Bash(env)",
       "Bash(docker-compose:*)",
       "Bash(docker-compose up:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": []
   }

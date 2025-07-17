@@ -327,8 +327,5 @@ func (rpp *RepositoryPipelineProcessor) GetStats() map[string]any {
 	}
 }
 
-// Note: Old query system removed - replaced by SmartQuery and ComplexQuery interfaces
-// in the new three-tier smart repository architecture.
-//
-// The batch, async, and pipeline processors above are now integrated with the
-// ComplexPathExecutor in the new smart repository system.
+// The batch, async, and pipeline processors above are integrated with the
+// ComplexPathExecutor in the smart repository system.

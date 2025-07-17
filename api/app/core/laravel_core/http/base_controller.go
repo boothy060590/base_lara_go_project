@@ -1,6 +1,7 @@
 package http
 
 import (
+	app_core "base_lara_go_project/app/core/go_core"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,22 +10,59 @@ import (
 // BaseController provides common controller functionality
 type BaseController struct{}
 
+// JSONResponse sends a JSON response using the optimized JSON processor
+func (c *BaseController) JSONResponse(ctx *gin.Context, statusCode int, data interface{}) {
+	// Use the optimized JSON processor if available
+	if jsonBytes, err := app_core.EncodeJSON(data); err == nil {
+		ctx.Data(statusCode, "application/json", jsonBytes)
+	} else {
+		// Fallback to standard JSON if optimization fails
+		ctx.JSON(statusCode, data)
+	}
+}
+
 // SuccessResponse returns a success response
 func (c *BaseController) SuccessResponse(ctx *gin.Context, data interface{}, message string) {
-	ctx.JSON(http.StatusOK, gin.H{
-		"success": true,
+	// Try to use schema-based response first
+	if schemaBytes, err := app_core.RenderGlobalSchema("api_success", map[string]interface{}{
 		"message": message,
 		"data":    data,
-	})
+	}); err == nil {
+		ctx.Data(http.StatusOK, "application/json", schemaBytes)
+		return
+	}
+	
+	// Fall back to pooled response
+	resp := app_core.GetPooledGenericResponse()
+	defer app_core.PutPooledGenericResponse(resp)
+	
+	resp.Success = true
+	resp.Message = message
+	resp.Data = data
+	
+	c.JSONResponse(ctx, http.StatusOK, resp)
 }
 
 // ErrorResponse returns an error response
 func (c *BaseController) ErrorResponse(ctx *gin.Context, statusCode int, message string, errors interface{}) {
-	ctx.JSON(statusCode, gin.H{
-		"success": false,
+	// Try to use schema-based response first
+	if schemaBytes, err := app_core.RenderGlobalSchema("api_error", map[string]interface{}{
 		"message": message,
 		"errors":  errors,
-	})
+	}); err == nil {
+		ctx.Data(statusCode, "application/json", schemaBytes)
+		return
+	}
+	
+	// Fall back to pooled response
+	resp := app_core.GetPooledErrorResponse()
+	defer app_core.PutPooledErrorResponse(resp)
+	
+	resp.Success = false
+	resp.Message = message
+	resp.Errors = errors
+	
+	c.JSONResponse(ctx, statusCode, resp)
 }
 
 // ValidationErrorResponse returns a validation error response
@@ -76,11 +114,14 @@ func (c *BaseController) CollectionResponse(ctx *gin.Context, collection interfa
 
 // CreatedResponse returns a created response (Laravel-style)
 func (c *BaseController) CreatedResponse(ctx *gin.Context, resource interface{}) {
-	ctx.JSON(http.StatusCreated, gin.H{
-		"success": true,
-		"message": "Resource created successfully",
-		"data":    resource,
-	})
+	resp := app_core.GetPooledGenericResponse()
+	defer app_core.PutPooledGenericResponse(resp)
+	
+	resp.Success = true
+	resp.Message = "Resource created successfully"
+	resp.Data = resource
+	
+	c.JSONResponse(ctx, http.StatusCreated, resp)
 }
 
 // UpdatedResponse returns an updated response (Laravel-style)

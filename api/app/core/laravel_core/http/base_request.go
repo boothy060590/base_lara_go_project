@@ -2,7 +2,9 @@ package http
 
 import (
 	app_core "base_lara_go_project/app/core/go_core"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -126,24 +128,38 @@ func (fr *FormRequest) Validate() (bool, map[string][]string) {
 func (fr *FormRequest) parseRequestData() map[string]any {
 	data := make(map[string]any)
 
-	// Parse form data
-	if err := fr.request.ParseForm(); err == nil {
-		for key, values := range fr.request.Form {
-			if len(values) == 1 {
-				data[key] = values[0]
-			} else {
-				data[key] = values
+	// Parse JSON request body if content type is application/json
+	contentType := fr.request.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		if body, err := io.ReadAll(fr.request.Body); err == nil && len(body) > 0 {
+			var jsonData map[string]any
+			if err := app_core.DecodeJSON(body, &jsonData); err == nil {
+				// Merge JSON data into the main data map
+				for key, value := range jsonData {
+					data[key] = value
+				}
 			}
 		}
-	}
+	} else {
+		// Parse form data for non-JSON requests
+		if err := fr.request.ParseForm(); err == nil {
+			for key, values := range fr.request.Form {
+				if len(values) == 1 {
+					data[key] = values[0]
+				} else {
+					data[key] = values
+				}
+			}
+		}
 
-	// Parse multipart form data
-	if err := fr.request.ParseMultipartForm(32 << 20); err == nil {
-		for key, values := range fr.request.MultipartForm.Value {
-			if len(values) == 1 {
-				data[key] = values[0]
-			} else {
-				data[key] = values
+		// Parse multipart form data
+		if err := fr.request.ParseMultipartForm(32 << 20); err == nil {
+			for key, values := range fr.request.MultipartForm.Value {
+				if len(values) == 1 {
+					data[key] = values[0]
+				} else {
+					data[key] = values
+				}
 			}
 		}
 	}
