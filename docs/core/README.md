@@ -191,6 +191,15 @@ The framework automatically selects optimizations based on your use case:
 - Performance benchmarks
 - Safety mechanisms
 
+### **[Smart File Processing](./SMART_FILE_PROCESSING.md)**
+- Memory-mapped file processing
+- Smart auto-detection engine
+- Configurable processing strategies
+- Developer override capabilities
+- File type extensions
+- Performance monitoring
+- Integration with existing systems
+
 ### **[Developer Guide](./DEVELOPER_GUIDE.md)**
 - Quick start tutorial
 - Core concepts explanation

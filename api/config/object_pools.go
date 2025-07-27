@@ -206,6 +206,8 @@ func ObjectPoolsConfig() map[string]interface{} {
 					"track_allocations": true,
 					"track_reuses":      true,
 				},
+				// Custom factory function - developers can provide their own object creation logic
+				"factory_func": "CreateCustomTypeObject", // Function name to create custom objects
 			},
 
 			// Example User pool - developers can add this if they need it

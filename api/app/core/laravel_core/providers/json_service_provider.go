@@ -260,6 +260,11 @@ func (jsp *JSONServiceProvider) initializeMetrics() error {
 
 // registerSchemaTemplates registers all schema templates
 func (jsp *JSONServiceProvider) registerSchemaTemplates() error {
+	if jsp.config == nil {
+		log.Println("JSON config is nil, using default config")
+		jsp.config = go_core.GetDefaultJSONSchemaConfig()
+	}
+	
 	if !jsp.config.Enabled {
 		return nil
 	}

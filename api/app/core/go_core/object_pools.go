@@ -435,8 +435,36 @@ func initializePool(manager *ObjectPoolManager, poolName string, poolConfig inte
 	return nil
 }
 
+// Registry for custom pool factory functions
+var customPoolFactories = make(map[string]func() PoolableObject)
+var customPoolFactoriesMutex sync.RWMutex
+
+// RegisterCustomPoolFactory allows developers to register custom pool types
+// This enables config-driven extensibility without touching core code
+func RegisterCustomPoolFactory(poolType string, factory func() PoolableObject) {
+	customPoolFactoriesMutex.Lock()
+	defer customPoolFactoriesMutex.Unlock()
+	customPoolFactories[poolType] = factory
+}
+
+// GetRegisteredPoolTypes returns all registered pool types (core + custom)
+func GetRegisteredPoolTypes() []string {
+	customPoolFactoriesMutex.RLock()
+	defer customPoolFactoriesMutex.RUnlock()
+	
+	coreTypes := []string{"user", "event", "response", "job", "cache", "db_row", "request", "validation", "log_entry", "mail_message"}
+	customTypes := make([]string, 0, len(customPoolFactories))
+	for poolType := range customPoolFactories {
+		customTypes = append(customTypes, poolType)
+	}
+	
+	return append(coreTypes, customTypes...)
+}
+
 // createPoolFactory creates a factory function for the given pool type
+// Now supports both core types and custom registered types
 func createPoolFactory(poolType string) (func() PoolableObject, error) {
+	// Check core types first
 	switch poolType {
 	case "user":
 		return func() PoolableObject { return &PooledUser{} }, nil
@@ -458,9 +486,18 @@ func createPoolFactory(poolType string) (func() PoolableObject, error) {
 		return func() PoolableObject { return &PooledLogEntry{} }, nil
 	case "mail_message":
 		return func() PoolableObject { return &PooledMailMessage{} }, nil
-	default:
-		return nil, fmt.Errorf("unknown pool type: %s", poolType)
 	}
+	
+	// Check custom registered types
+	customPoolFactoriesMutex.RLock()
+	factory, exists := customPoolFactories[poolType]
+	customPoolFactoriesMutex.RUnlock()
+	
+	if exists {
+		return factory, nil
+	}
+	
+	return nil, fmt.Errorf("unknown pool type: %s. Available types: %v", poolType, GetRegisteredPoolTypes())
 }
 
 // Helper functions for configuration parsing

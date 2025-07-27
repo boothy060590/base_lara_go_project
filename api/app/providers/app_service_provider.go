@@ -14,6 +14,9 @@ type AppServiceProvider struct {
 
 // Register registers all core providers and application-specific providers
 func (p *AppServiceProvider) Register(container *app_core.Container) error {
+	// Register custom pool types before core providers initialize them
+	p.registerCustomPoolTypes()
+	
 	// First, register all core providers (database, cache, events, etc.)
 	if err := p.AppServiceProvider.Register(container); err != nil {
 		return err
@@ -83,4 +86,33 @@ func (p *AppServiceProvider) Provides() []string {
 // When returns the conditions when this provider should be loaded
 func (p *AppServiceProvider) When() []string {
 	return []string{}
+}
+
+// registerCustomPoolTypes registers custom pool types that can be used in config
+// This allows developers to extend the object pool system without touching core code
+func (p *AppServiceProvider) registerCustomPoolTypes() {
+	// Example custom pool type
+	app_core.RegisterCustomPoolFactory("custom_type", func() app_core.PoolableObject {
+		return &CustomTypeObject{}
+	})
+	
+	log.Printf("Registered custom pool types: custom_type")
+}
+
+// CustomTypeObject is an example of how to create custom poolable objects
+// Developers can define their own objects and register them with the pool system
+type CustomTypeObject struct {
+	ID       string                 `json:"id"`
+	Name     string                 `json:"name"`
+	Data     map[string]interface{} `json:"data"`
+	Created  int64                  `json:"created"`
+}
+
+// Reset implements the PoolableObject interface
+// This method is called when the object is returned to the pool
+func (c *CustomTypeObject) Reset() {
+	c.ID = ""
+	c.Name = ""
+	c.Data = nil
+	c.Created = 0
 }

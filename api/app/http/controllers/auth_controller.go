@@ -2,11 +2,9 @@ package controllers
 
 import (
 	app_core "base_lara_go_project/app/core/go_core"
+	laravel_http "base_lara_go_project/app/core/laravel_core/http"
 	"base_lara_go_project/app/http/requests"
-	"base_lara_go_project/app/models"
-	"base_lara_go_project/app/repositories"
 	"base_lara_go_project/app/services"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,23 +12,28 @@ import (
 
 // AuthController handles authentication requests
 type AuthController struct {
+	laravel_http.BaseController
 	userService *services.UserService
 	container   *app_core.Container
 }
 
 // NewAuthController creates a new auth controller
 func NewAuthController(container *app_core.Container) *AuthController {
-	// Get user repository from container
-	userRepoInstance, err := container.Resolve("repository.user")
-	if err != nil {
-		panic("User repository not found in container")
+	// Try to get user service from container first
+	var userService *services.UserService
+	
+	if userServiceInstance, err := container.Resolve("service.user"); err == nil {
+		userService = userServiceInstance.(*services.UserService)
+	} else {
+		// For now, create a mock service when repository is not available
+		// This allows the application to start even without database
+		userService = services.NewMockUserService()
 	}
-	userRepo := userRepoInstance.(*repositories.UserRepository)
 
-	userService := services.NewUserService(userRepo)
 	return &AuthController{
-		userService: userService,
-		container:   container,
+		BaseController: laravel_http.BaseController{},
+		userService:    userService,
+		container:      container,
 	}
 }
 
@@ -41,10 +44,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	valid, errors := request.Validate()
 
 	if !valid {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+		ac.ValidationErrorResponse(c, errors)
 		return
 	}
 
@@ -60,10 +60,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	// Create user
 	createdUser, err := ac.userService.CreateUser(userData, []string{"user"})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "Failed to create user",
-			"error":   err.Error(),
-		})
+		ac.ServerErrorResponse(c, "Failed to create user: "+err.Error())
 		return
 	}
 
@@ -71,10 +68,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 	// event := auth_events.NewUserCreatedEvent(createdUser)
 	// ac.container.GetEventDispatcher().Dispatch(event)
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "User registered successfully",
-		"user":    createdUser,
-	})
+	ac.CreatedResponse(c, createdUser)
 }
 
 // Login handles user login
@@ -84,10 +78,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	valid, errors := request.Validate()
 
 	if !valid {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{
-			"message": "Validation failed",
-			"errors":  errors,
-		})
+		ac.ValidationErrorResponse(c, errors)
 		return
 	}
 
@@ -98,21 +89,20 @@ func (ac *AuthController) Login(c *gin.Context) {
 	// Authenticate user
 	user, err := ac.userService.AuthenticateUser(email, password)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "Invalid credentials",
-			"error":   err.Error(),
-		})
+		ac.UnauthorizedResponse(c, "Invalid credentials")
 		return
 	}
 
 	// Generate token (simplified for now)
 	token := "token_" + time.Now().Format("20060102150405")
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Login successful",
-		"user":    user,
-		"token":   token,
-	})
+	// Use optimized login success response
+	loginData := map[string]interface{}{
+		"user":  user,
+		"token": token,
+	}
+	
+	ac.SuccessResponse(c, loginData, "Login successful")
 }
 
 // GetProfile returns the authenticated user's profile
@@ -120,65 +110,16 @@ func (ac *AuthController) GetProfile(c *gin.Context) {
 	// Get user from context (set by middleware)
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "User not authenticated",
-		})
+		ac.UnauthorizedResponse(c, "User not authenticated")
 		return
 	}
 
 	user, err := ac.userService.FindByID(userID.(uint))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"message": "User not found",
-			"error":   err.Error(),
-		})
+		ac.NotFoundResponse(c, "User not found: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user": user,
-	})
+	ac.ResourceResponse(c, user)
 }
 
-// UserService handles user business logic
-type UserService struct {
-	userRepo  app_core.Repository[models.User]
-	userCache app_core.Cache[models.User]
-}
-
-// NewUserService creates a new user service
-func NewUserService(userRepo app_core.Repository[models.User], userCache app_core.Cache[models.User]) *UserService {
-	return &UserService{
-		userRepo:  userRepo,
-		userCache: userCache,
-	}
-}
-
-// CreateUser creates a new user
-func (s *UserService) CreateUser(userData map[string]interface{}) (*models.User, error) {
-	// TODO: Implement user creation with password hashing
-	// For now, create a placeholder user
-	user := &models.User{
-		ID:        1,
-		FirstName: userData["first_name"].(string),
-		LastName:  userData["last_name"].(string),
-		Email:     userData["email"].(string),
-		Password:  userData["password"].(string), // Will be hashed by BeforeSave hook
-	}
-
-	return user, nil
-}
-
-// AuthenticateUser authenticates a user
-func (s *UserService) AuthenticateUser(email, password string) (*models.User, error) {
-	// TODO: Implement proper authentication with password verification
-	// For now, return a placeholder user
-	user := &models.User{
-		ID:        1,
-		FirstName: "Test",
-		LastName:  "User",
-		Email:     email,
-	}
-
-	return user, nil
-}

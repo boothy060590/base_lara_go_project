@@ -363,3 +363,10 @@ func (s *UserService) isValidEmail(email string) bool {
 	// Simple email validation - in production, use a proper regex
 	return len(email) > 0 && len(email) < 255
 }
+
+// NewMockUserService creates a mock user service for testing or fallback scenarios
+func NewMockUserService() *UserService {
+	return &UserService{
+		userRepo: nil, // No repository available
+	}
+}
